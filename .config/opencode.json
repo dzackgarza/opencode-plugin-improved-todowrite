@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "github-copilot/gpt-4.1",
+  "plugin": [
+    "file:///home/dzack/opencode-plugins/improved-todowrite/src/index.ts"
+  ],
+  "permission": {
+    "todowrite": "deny",
+    "todoread": "deny",
+    "improved_todowrite": "allow",
+    "improved_todoread": "allow"
+  }
+}

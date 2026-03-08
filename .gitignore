@@ -1,0 +1,6 @@
+node_modules/
+mcp-server/.venv/
+mcp-server/.pytest_cache/
+**/__pycache__/
+*.py[cod]
+!.envrc
