@@ -1,21 +1,23 @@
-# improved-todowrite MCP server
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
 
-FastMCP wrapper for `improved_todowrite` and `improved_todoread`.
+# improved-todowrite MCP Server
 
-## Install
+`improved-todowrite` MCP server wraps `improved_todowrite` and `improved_todoread` with FastMCP.
+
+## Installation
 
 ```bash
 cd /home/dzack/opencode-plugins/improved-todowrite/mcp-server
 uv sync --dev
 ```
 
-Local run:
+Run locally:
 
 ```bash
 uv run improved-todowrite-mcp
 ```
 
-Remote-style OpenCode config using `uvx` from GitHub:
+Configure OpenCode for remote-style access using `uvx` from GitHub:
 
 ```json
 {
@@ -37,6 +39,8 @@ Remote-style OpenCode config using `uvx` from GitHub:
 
 ### `improved_todowrite`
 
+Write todos for a project directory.
+
 ```text
 project_dir: string
 todos: TodoNode[]
@@ -44,8 +48,10 @@ todos: TodoNode[]
 
 ### `improved_todoread`
 
+Read todos for a project directory.
+
 ```text
 project_dir: string
 ```
 
-`project_dir` is hashed into a stable synthetic session ID so MCP callers can read back the same persisted tree.
+Hashing `project_dir` generates a stable synthetic session ID. This allows MCP callers to retrieve the same persisted tree.

@@ -1,15 +1,20 @@
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
+
+
 # improved-todowrite
 
-OpenCode plugin that stores a hierarchical todo tree per session and exposes tree-native read/write tools.
+This OpenCode plugin stores a hierarchical todo tree for each session and exposes tree-native read/write tools.
 
 ## Install
+
+Install the plugin from its directory:
 
 ```bash
 cd /home/dzack/opencode-plugins/improved-todowrite
 just install
 ```
 
-OpenCode plugin registration via `file:`:
+Register the plugin in OpenCode via `file:`:
 
 ```json
 {
@@ -19,11 +24,11 @@ OpenCode plugin registration via `file:`:
 }
 ```
 
-Sample local config: [`improved-todowrite/.config/opencode.json`](/home/dzack/opencode-plugins/improved-todowrite/.config/opencode.json)
+See the sample local configuration: [`improved-todowrite/.config/opencode.json`](/home/dzack/opencode-plugins/improved-todowrite/.config/opencode.json).
 
-Local one-shot verification uses the package `.envrc`, which exports `OPENCODE_CONFIG` to that sample config.
+### Verification
 
-Canonical local proof path:
+Verification uses the package `.envrc` to export `OPENCODE_CONFIG`. To verify the installation locally:
 
 ```bash
 cd /home/dzack/opencode-plugins/improved-todowrite
@@ -32,7 +37,7 @@ timeout 30 /home/dzack/.opencode/bin/opencode run --agent Minimal \
   "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
 ```
 
-Fallback without `direnv`:
+If you do not use `direnv`, run the following:
 
 ```bash
 OPENCODE_CONFIG=/home/dzack/opencode-plugins/improved-todowrite/.config/opencode.json \
@@ -40,7 +45,7 @@ OPENCODE_CONFIG=/home/dzack/opencode-plugins/improved-todowrite/.config/opencode
   "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
 ```
 
-MCP install:
+### MCP Installation
 
 ```json
 {
@@ -62,38 +67,26 @@ MCP install:
 
 ### `improved_todowrite`
 
-Description shown to the agent:
+Use this tool to write or replace the hierarchical todo tree for the current session. Prefer this over flat todos for complex work involving phases, tasks, and subtasks.
 
-```text
-Use when you need to write or replace the hierarchical todo tree for the current session. Prefer this over flat todos for long or complex work that benefits from phases, tasks, and subtasks.
-```
+#### Schema
 
-Schema:
+- `todos`: `TodoTreeNode[]`
 
-```text
-todos: TodoTreeNode[]
-
-TodoTreeNode:
-  id: string
-  content: string
-  status: string
-  priority: string
-  children: TodoTreeNode[]
-```
+**TodoTreeNode:**
+- `id`: string
+- `content`: string
+- `status`: string
+- `priority`: string
+- `children`: `TodoTreeNode[]`
 
 ### `improved_todoread`
 
-Description shown to the agent:
+Use this tool to read the hierarchical todo tree for the current session. This helps recover the current plan structure before extending or updating it.
 
-```text
-Use when you need to read the hierarchical todo tree for the current session. Use this to recover the current plan structure before extending or updating it.
-```
+#### Schema
 
-Schema:
-
-```text
-{}
-```
+- `{}`
 
 ## Dependencies
 
