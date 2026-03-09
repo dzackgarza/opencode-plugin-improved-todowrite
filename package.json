@@ -13,5 +13,6 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.20"
-  }
+  },
+  "module": "./src/index.ts"
 }

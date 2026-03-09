@@ -1,36 +1,51 @@
-# FastMCP Server for improved-todowrite
+# improved-todowrite MCP server
 
-Wrapper that exposes the tree-native `improved_todowrite` and `improved_todoread` tools via MCP.
+FastMCP wrapper for `improved_todowrite` and `improved_todoread`.
 
-## Installation
+## Install
 
 ```bash
-cd mcp-server
+cd /home/dzack/opencode-plugins/improved-todowrite/mcp-server
 uv sync --dev
 ```
 
-## Usage
+Local run:
 
 ```bash
-cd mcp-server
-uv run fastmcp run server.py
+uv run improved-todowrite-mcp
 ```
 
-## FastMCP CLI
+Remote-style OpenCode config using `uvx` from GitHub:
 
-```bash
-cd mcp-server
-uv run fastmcp call server.py improved_todowrite '{"project_dir":"/path/to/project","todos":[{"id":"phase-1","content":"Ship persistence layer","status":"pending","priority":"high","children":[]}]}'
+```json
+{
+  "mcp": {
+    "improved-todowrite": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--from",
+        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-todowrite/mcp-server",
+        "improved-todowrite-mcp"
+      ]
+    }
+  }
+}
 ```
 
-```bash
-cd mcp-server
-uv run fastmcp call server.py improved_todoread '{"project_dir":"/path/to/project"}'
+## MCP Tools
+
+### `improved_todowrite`
+
+```text
+project_dir: string
+todos: TodoNode[]
 ```
 
-## Notes
+### `improved_todoread`
 
-- OpenCode runtime uses the real `context.sessionID`.
-- MCP callers must pass `project_dir`; the wrapper hashes it into a stable synthetic session ID.
-- The wrapper calls the shared `mcp-shim/run-tool.ts` helper.
-- Human-facing output shows top-level todos first, followed by the full persisted tree JSON.
+```text
+project_dir: string
+```
+
+`project_dir` is hashed into a stable synthetic session ID so MCP callers can read back the same persisted tree.

@@ -5,6 +5,9 @@ description = "FastMCP wrapper for improved-todowrite"
 requires-python = ">=3.11"
 dependencies = ["fastmcp>=2.0.0"]
 
+[project.scripts]
+improved-todowrite-mcp = "server:main"
+
 [dependency-groups]
 dev = ["pytest-asyncio>=0.24.0", "inline-snapshot>=0.10.0"]
 

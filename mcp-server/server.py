@@ -132,5 +132,9 @@ async def improved_todoread(
     return _run_tool("improved_todoread", {"__mcp_session_id": session_id})
 
 
-if __name__ == "__main__":
+def main() -> None:
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
