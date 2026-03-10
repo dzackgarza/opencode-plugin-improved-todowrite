@@ -1,5 +1,5 @@
 {
-  "name": "@dzackgarza/improved-todowrite",
+  "name": "@dzackgarza/opencode-plugin-improved-todowrite",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"
@@ -20,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dzackgarza/improved-todowrite.git"
+    "url": "git+https://github.com/dzackgarza/opencode-plugin-improved-todowrite.git"
   },
   "keywords": [
     "opencode",
