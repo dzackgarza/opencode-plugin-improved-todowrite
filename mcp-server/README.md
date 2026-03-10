@@ -1,4 +1,3 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
 
 # improved-todowrite MCP Server
 
@@ -7,7 +6,7 @@
 ## Installation
 
 ```bash
-cd /home/dzack/opencode-plugins/improved-todowrite/mcp-server
+cd ./improved-todowrite/mcp-server
 uv sync --dev
 ```
 

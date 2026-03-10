@@ -7,7 +7,7 @@ This OpenCode plugin stores a hierarchical todo tree for each session and expose
 Install the plugin from its directory:
 
 ```bash
-cd /home/dzack/opencode-plugins/improved-todowrite
+cd ./improved-todowrite
 just install
 ```
 
@@ -16,29 +16,29 @@ Register the plugin in OpenCode via `file:`:
 ```json
 {
   "plugin": [
-    "file:///home/dzack/opencode-plugins/improved-todowrite/src/index.ts"
+    "file:///path/to/improved-todowrite/src/index.ts"
   ]
 }
 ```
 
-See the sample local configuration: [`improved-todowrite/.config/opencode.json`](/home/dzack/opencode-plugins/improved-todowrite/.config/opencode.json).
+See the sample local configuration: [`improved-todowrite/.config/opencode.json`](./improved-todowrite/.config/opencode.json).
 
 ### Verification
 
 Verification uses the package `.envrc` to export `OPENCODE_CONFIG`. To verify the installation locally:
 
 ```bash
-cd /home/dzack/opencode-plugins/improved-todowrite
+cd ./improved-todowrite
 direnv allow
-timeout 30 /home/dzack/.opencode/bin/opencode run --agent Minimal \
+timeout 30 /path/to/opencode run --agent Minimal \
   "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
 ```
 
 If you do not use `direnv`, run the following:
 
 ```bash
-OPENCODE_CONFIG=/home/dzack/opencode-plugins/improved-todowrite/.config/opencode.json \
-  timeout 30 /home/dzack/.opencode/bin/opencode run --agent Minimal \
+OPENCODE_CONFIG=./improved-todowrite/.config/opencode.json \
+  timeout 30 /path/to/opencode run --agent Minimal \
   "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
 ```
 
@@ -89,7 +89,7 @@ Use this tool to read the hierarchical todo tree for the current session. This h
 
 - Runtime: Bun, SQLite via `bun:sqlite`, `@opencode-ai/plugin`
 - MCP wrapper: Python 3.11+, `uv`, `fastmcp`
-- Shared helper: [`mcp-shim/run-tool.ts`](/home/dzack/opencode-plugins/mcp-shim/run-tool.ts)
+- Shared helper: [`opencode-plugin-mcp-shim/run-tool.ts`](./opencode-plugin-mcp-shim/run-tool.ts)
 
 ## Checks
 

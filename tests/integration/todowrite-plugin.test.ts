@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 
-const OPENCODE = "/home/dzack/.opencode/bin/opencode";
-const TOOL_DIR = "/home/dzack/opencode-plugins/improved-todowrite";
+const OPENCODE = process.env.OPENCODE_BIN || "opencode";
+const TOOL_DIR = process.cwd();
 const MAX_BUFFER = 8 * 1024 * 1024;
 
 function run(prompt: string, timeout = 180_000) {
