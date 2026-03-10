@@ -1,3 +1,5 @@
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
+
 # improved-todowrite
 
 This OpenCode plugin stores a hierarchical todo tree for each session and exposes tree-native read/write tools.
