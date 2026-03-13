@@ -16,12 +16,12 @@ just install
 
 Use the lowercase `justfile` entrypoints for local automation. Do not run `bun test`, `bunx tsc`, or `uv run pytest` directly.
 
-Register the plugin in OpenCode via `file:`:
+Register the plugin in OpenCode via npm:
 
 ```json
 {
   "plugin": [
-    "file:///path/to/improved-todowrite/src/index.ts"
+    "@dzackgarza/opencode-plugin-improved-todowrite@git+https://github.com/dzack/opencode-plugins#subdirectory=opencode-plugin-improved-todowrite"
   ]
 }
 ```
