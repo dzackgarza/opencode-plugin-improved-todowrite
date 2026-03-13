@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir as systemTmpdir } from "node:os";
@@ -13,9 +14,8 @@ const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
 const SESSION_TIMEOUT_MS = 240_000;
 const PRIMARY_AGENT_NAME = "plugin-proof";
-const VERIFICATION_PASSPHRASE =
-  process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE?.trim() ||
-  "SWORDFISH-TODO-TREE";
+const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
+if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
 type ToolState = {
   output?: unknown;
@@ -318,12 +318,13 @@ afterAll(async () => {
 
 describe("improved-todowrite live e2e", () => {
   it("proves improved_todowrite and improved_todoread execute in a manager-driven live session", async () => {
+    const nonce = randomUUID();
     const sessionID = createSession(`todowrite:${Date.now()}`).id;
 
     try {
       promptSession(
         sessionID,
-        "Call the tool `improved_todowrite` directly. Do not use bash, shell, task, or any CLI command. Set `todos` to exactly this JSON array: [{\"id\":\"phase-1\",\"content\":\"Ship persistence layer\",\"status\":\"pending\",\"priority\":\"high\",\"children\":[]}]. After the tool call finishes, reply with ONLY READY.",
+        `Protocol: call \`improved_todowrite\` exactly once with \`todos\` set to exactly this JSON array: [{"id":"phase-1","content":"${nonce}","status":"pending","priority":"high","children":[]}]. Then call \`improved_todoread\` exactly once. Do not call any other tool. Do not use bash, shell, task, skills, CLI commands, file tools, or builtin todo tools. If either exact tool call is unavailable or impossible, stop immediately and reply with ONLY FAIL:PROOF_NOT_POSSIBLE. After both exact tool calls finish successfully, reply with ONLY READY.`,
       );
 
       const writeTool = await waitForCompletedToolUse(
@@ -335,6 +336,7 @@ describe("improved-todowrite live e2e", () => {
 
       expect(writeOutput).toContain(VERIFICATION_PASSPHRASE);
       expect(writeOutput).toContain('"id": "phase-1"');
+      expect(writeOutput).toContain(nonce);
 
       promptSession(
         sessionID,
@@ -349,7 +351,7 @@ describe("improved-todowrite live e2e", () => {
         typeof readTool.output === "string" ? readTool.output : "";
 
       expect(readOutput).toContain(VERIFICATION_PASSPHRASE);
-      expect(readOutput).toContain("- [ ] Ship persistence layer");
+      expect(readOutput).toContain(nonce);
       expect(readOutput).toContain('"id": "phase-1"');
     } finally {
       safeDeleteSession(sessionID);
