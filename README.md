@@ -71,24 +71,47 @@ OPENCODE_CONFIG=./improved-todowrite/.config/opencode.json \
 
 Use this tool to write or replace the hierarchical todo tree for the current session. Prefer this over flat todos for complex work involving phases, tasks, and subtasks.
 
-#### Schema
+#### Input
 
-- `todos`: `TodoTreeNode[]`
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `todos` | `TodoTreeNode[]` | Yes | Full replacement tree |
 
-**TodoTreeNode:**
-- `id`: string
-- `content`: string
-- `status`: string
-- `priority`: string
-- `children`: `TodoTreeNode[]`
+**`TodoTreeNode`:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Stable unique ID for this node |
+| `content` | `string` | Brief description of the task |
+| `status` | `"pending" \| "in_progress" \| "completed" \| "cancelled"` | Current status |
+| `priority` | `"high" \| "medium" \| "low"` | Priority level |
+| `children` | `TodoTreeNode[]` | Nested sub-tasks |
+
+#### Example Input
+
+```json
+{
+  "todos": [
+    {
+      "id": "phase-1",
+      "content": "Research",
+      "status": "completed",
+      "priority": "high",
+      "children": [
+        { "id": "task-1-1", "content": "Read docs", "status": "completed", "priority": "medium", "children": [] }
+      ]
+    }
+  ]
+}
+```
 
 ### `improved_todoread`
 
 Use this tool to read the hierarchical todo tree for the current session. This helps recover the current plan structure before extending or updating it.
 
-#### Schema
+#### Input
 
-- `{}`
+No arguments.
 
 ## Environment Variables
 
