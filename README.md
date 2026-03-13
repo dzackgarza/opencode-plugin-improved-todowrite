@@ -4,6 +4,13 @@
 
 This OpenCode plugin stores a hierarchical todo tree for each session and exposes tree-native read/write tools.
 
+## Features
+
+- `improved_todowrite` — replace the full todo tree for the current session with a typed `TodoTreeNode[]` structure
+- `improved_todoread` — read the current tree back before extending or updating it
+- SQLite-backed persistent storage scoped to each session
+- Supports nested subtasks with `status`, `priority`, and `children` fields
+
 ## Install
 
 Install the plugin from its directory:
