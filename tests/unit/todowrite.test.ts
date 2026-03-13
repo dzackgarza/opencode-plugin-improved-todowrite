@@ -56,6 +56,28 @@ const TODO_TREE: TodoTreeNode[] = [
   },
 ];
 
+function withVerificationPassphrase<T>(
+  passphrase: string | undefined,
+  callback: () => T,
+): T {
+  const previous = process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE;
+  if (passphrase === undefined) {
+    delete process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE;
+  } else {
+    process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE = passphrase;
+  }
+
+  try {
+    return callback();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE;
+    } else {
+      process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE = previous;
+    }
+  }
+}
+
 async function createPlugin() {
   const promptCalls: unknown[] = [];
   return ImprovedTodowritePlugin({
@@ -141,20 +163,22 @@ describe("tree persistence helpers", () => {
   });
 
   it("builds a human-readable top-level summary plus full tree JSON", () => {
-    expect(buildTodoTreeResult(TODO_TREE)).toEqual({
-      title: "2 top-level todos",
-      metadata: {
-        topLevelCount: 2,
-        totalCount: 5,
-      },
-      output: [
-        "Top-level todos:",
-        "- [~] Ship persistence layer (2 children)",
-        "- [ ] Add MCP coverage",
-        "",
-        "Todo tree:",
-        JSON.stringify(TODO_TREE, null, 2),
-      ].join("\n"),
+    withVerificationPassphrase(undefined, () => {
+      expect(buildTodoTreeResult(TODO_TREE)).toEqual({
+        title: "2 top-level todos",
+        metadata: {
+          topLevelCount: 2,
+          totalCount: 5,
+        },
+        output: [
+          "Top-level todos:",
+          "- [~] Ship persistence layer (2 children)",
+          "- [ ] Add MCP coverage",
+          "",
+          "Todo tree:",
+          JSON.stringify(TODO_TREE, null, 2),
+        ].join("\n"),
+      });
     });
   });
 
@@ -173,22 +197,20 @@ describe("tree persistence helpers", () => {
   });
 
   it("appends a verification passphrase when explicitly enabled", () => {
-    process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE = "SWORDFISH-TODO-TREE";
-
-    expect(buildTodoTreeResult(TODO_TREE).output).toBe(
-      [
-        "Top-level todos:",
-        "- [~] Ship persistence layer (2 children)",
-        "- [ ] Add MCP coverage",
-        "",
-        "Todo tree:",
-        JSON.stringify(TODO_TREE, null, 2),
-        "",
-        "Verification passphrase: SWORDFISH-TODO-TREE",
-      ].join("\n"),
-    );
-
-    delete process.env.IMPROVED_TODO_VERIFICATION_PASSPHRASE;
+    withVerificationPassphrase("SWORDFISH-TODO-TREE", () => {
+      expect(buildTodoTreeResult(TODO_TREE).output).toBe(
+        [
+          "Top-level todos:",
+          "- [~] Ship persistence layer (2 children)",
+          "- [ ] Add MCP coverage",
+          "",
+          "Todo tree:",
+          JSON.stringify(TODO_TREE, null, 2),
+          "",
+          "Verification passphrase: SWORDFISH-TODO-TREE",
+        ].join("\n"),
+      );
+    });
   });
 });
 

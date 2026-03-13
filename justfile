@@ -1,11 +1,36 @@
-# Setup npm trusted publisher (one-time manual setup)
-setup-npm-trust:
-    npm trust github --repository dzackgarza/{{file_stem(justfile_directory())}} --file publish.yml
+repo_root := justfile_directory()
 
-# Manual publish from local (requires 2FA)
-publish:
-    npm publish
+justfile-hygiene:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if [ -e "{{repo_root}}/Justfile" ]; then
+    echo "Remove Justfile; use lowercase justfile as the single canonical entrypoint." >&2
+    exit 1
+  fi
 
-# Run TypeScript typecheck
+install: install-ts install-mcp
+
+install-ts:
+  direnv exec "{{repo_root}}" bun install
+
+install-mcp:
+  direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv sync --dev'
+
 typecheck:
-    bun run typecheck
+  direnv exec "{{repo_root}}" bunx tsc --noEmit
+
+test:
+  direnv exec "{{repo_root}}" bun test
+
+mcp-test:
+  direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv run pytest'
+
+check: justfile-hygiene typecheck test mcp-test
+
+setup-npm-trust:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  npm trust github --repository "dzackgarza/$(basename "{{repo_root}}")" --file publish.yml
+
+publish: check
+  direnv exec "{{repo_root}}" npm publish

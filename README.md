@@ -10,8 +10,11 @@ Install the plugin from its directory:
 
 ```bash
 cd ./improved-todowrite
+direnv allow .
 just install
 ```
+
+Use the lowercase `justfile` entrypoints for local automation. Do not run `bun test`, `bunx tsc`, or `uv run pytest` directly.
 
 Register the plugin in OpenCode via `file:`:
 
@@ -31,8 +34,8 @@ Verification uses the package `.envrc` to export `OPENCODE_CONFIG`. To verify th
 
 ```bash
 cd ./improved-todowrite
-direnv allow
-timeout 30 /path/to/opencode run --agent Minimal \
+direnv allow .
+timeout 30 /path/to/opencode run --agent plugin-proof \
   "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
 ```
 
@@ -40,7 +43,7 @@ If you do not use `direnv`, run the following:
 
 ```bash
 OPENCODE_CONFIG=./improved-todowrite/.config/opencode.json \
-  timeout 30 /path/to/opencode run --agent Minimal \
+  timeout 30 /path/to/opencode run --agent plugin-proof \
   "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
 ```
 
@@ -96,7 +99,6 @@ Use this tool to read the hierarchical todo tree for the current session. This h
 ## Checks
 
 ```bash
-just typecheck
-just test
-just mcp-test
+direnv allow .
+just check
 ```

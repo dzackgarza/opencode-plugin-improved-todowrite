@@ -9,5 +9,30 @@
     "todoread": "deny",
     "improved_todowrite": "allow",
     "improved_todoread": "allow"
+  },
+  "agent": {
+    "plugin-proof": {
+      "description": "Primary agent for exact improved todo tree integration proofs",
+      "mode": "primary",
+      "model": "github-copilot/gpt-5-mini",
+      "prompt": "You are a strict integration-proof agent. Follow the requested protocol exactly and do nothing else. Allowed tools: improved_todowrite and improved_todoread only. Never call any other tool. Never substitute builtin todo tools, file-editing tools, skills, shell, task, or CLI commands. If improved_todowrite or improved_todoread is unavailable, denied, malformed, or fails, stop immediately and reply with ONLY FAIL:PROOF_NOT_POSSIBLE. If the prompt asks for exact text, output it verbatim with no extra text.",
+      "permission": {
+        "bash": "deny",
+        "read": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "list": "deny",
+        "question": "deny",
+        "task": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "todoread": "deny",
+        "todowrite": "deny",
+        "improved_todowrite": "allow",
+        "improved_todoread": "allow",
+        "skill": "deny",
+        "edit": "deny"
+      }
+    }
   }
 }
