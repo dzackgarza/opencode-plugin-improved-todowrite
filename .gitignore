@@ -4,3 +4,4 @@ mcp-server/.pytest_cache/
 **/__pycache__/
 *.py[cod]
 !.envrc
+.serena/

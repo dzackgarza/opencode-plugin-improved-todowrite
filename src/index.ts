@@ -9,6 +9,13 @@ import {
   storeTodoForest,
   TodoTreeNodeSchema,
 } from "./todo-tree.ts";
+import pkg from "../package.json" assert { type: "json" };
+
+const PLUGIN_VERSION = pkg.version;
+
+function withPluginVersion(description: string): string {
+  return `${description} (Plugin version: ${PLUGIN_VERSION})`;
+}
 
 export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
   async function publishTodoTree(sessionID: string, todos: Parameters<typeof buildMarkdownTodoTree>[0]) {
@@ -45,7 +52,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
   return {
     tool: {
       improved_todowrite: tool({
-        description: IMPROVED_TODOWRITE_DESCRIPTION,
+        description: withPluginVersion(IMPROVED_TODOWRITE_DESCRIPTION),
         args: {
           todos: tool.schema.array(TodoTreeNodeSchema),
         },
@@ -62,7 +69,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
         },
       }),
       improved_todoread: tool({
-        description: IMPROVED_TODOREAD_DESCRIPTION,
+        description: withPluginVersion(IMPROVED_TODOREAD_DESCRIPTION),
         args: {},
         async execute(_args, context) {
           await context.ask({

@@ -229,7 +229,7 @@ describe("ImprovedTodowritePlugin", () => {
       {
         sessionID: "ses_tree",
         messageID: "msg_write",
-        agent: "Minimal",
+        agent: "plugin-proof",
         directory: "/tmp",
         worktree: "/tmp",
         abort: new AbortController().signal,
@@ -244,7 +244,7 @@ describe("ImprovedTodowritePlugin", () => {
       {
         sessionID: "ses_tree",
         messageID: "msg_read",
-        agent: "Minimal",
+        agent: "plugin-proof",
         directory: "/tmp",
         worktree: "/tmp",
         abort: new AbortController().signal,

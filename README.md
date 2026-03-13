@@ -30,7 +30,7 @@ See the sample local configuration: [`improved-todowrite/.config/opencode.json`]
 
 ### Verification
 
-Verification uses the package `.envrc` to export `OPENCODE_CONFIG`. To verify the installation locally:
+Verification uses the package `.envrc` to export `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR`. To verify the installation locally:
 
 ```bash
 cd ./improved-todowrite
