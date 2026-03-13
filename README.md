@@ -90,6 +90,12 @@ Use this tool to read the hierarchical todo tree for the current session. This h
 
 - `{}`
 
+## Environment Variables
+
+| Name | Required | Default | Controls |
+|------|----------|---------|---------|
+| `IMPROVED_TODOWRITE_TEST_PASSPHRASE` | No | — | Passphrase for integration test liveness proof |
+
 ## Dependencies
 
 - Runtime: Bun, SQLite via `bun:sqlite`, `@opencode-ai/plugin`
