@@ -5,3 +5,4 @@ mcp-server/.pytest_cache/
 *.py[cod]
 !.envrc
 .serena/
+.worktrees

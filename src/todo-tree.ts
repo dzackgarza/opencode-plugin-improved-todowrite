@@ -1,303 +1,483 @@
-import { Database } from "bun:sqlite";
 import { tool } from "@opencode-ai/plugin";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { z } from "zod";
 
-const IMPROVED_TODO_DB_PATH_ENV = "IMPROVED_TODO_SQLITE_PATH";
-const IMPROVED_TODO_VERIFICATION_PASSPHRASE_ENV =
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+export const IMPROVED_TODO_DIR_ENV = "IMPROVED_TODO_DIR";
+export const IMPROVED_TODO_VERIFICATION_PASSPHRASE_ENV =
   "IMPROVED_TODO_VERIFICATION_PASSPHRASE";
-const DEFAULT_TODO_DB_PATH = join(
+
+export const DEFAULT_TODO_DIR = join(
   process.env.HOME ?? "/tmp",
   ".local",
   "share",
   "opencode",
-  "improved-todowrite.sqlite",
+  "todos",
 );
 
-export const IMPROVED_TODOWRITE_DESCRIPTION =
-  "Use when you need to write or replace the hierarchical todo tree for the current session. Prefer this over flat todos for long or complex work that benefits from phases, tasks, and subtasks.";
-export const IMPROVED_TODOREAD_DESCRIPTION =
-  "Use when you need to read the hierarchical todo tree for the current session. Use this to recover the current plan structure before extending or updating it.";
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-export type TodoTreeNode = {
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type TodoPriority = "high" | "medium" | "low";
+
+export type TodoNode = {
   id: string;
   content: string;
-  status: string;
-  priority: string;
-  children: TodoTreeNode[];
+  status: TodoStatus;
+  priority: TodoPriority;
+  cancelReason?: string;
+  children: TodoNode[];
 };
 
-export type FlattenedTodoRow = {
-  sessionID: string;
-  nodeID: string;
-  parentID: string | null;
+export type PlanInput = {
   content: string;
-  status: string;
-  priority: string;
-  depth: number;
-  position: number;
+  priority?: TodoPriority;
+  children?: PlanInput[];
 };
 
-export const TodoTreeNodeSchema: z.ZodType<TodoTreeNode> = tool.schema.lazy(() =>
+export type EditOp =
+  | {
+      type: "add";
+      parent_id?: string;
+      after_id?: string;
+      content: string;
+      priority?: TodoPriority;
+    }
+  | { type: "update"; id: string; content?: string; priority?: TodoPriority }
+  | { type: "cancel"; id: string; reason: string };
+
+// ─── Zod schemas (for tool arg validation) ───────────────────────────────────
+
+export const PlanInputSchema: z.ZodType<PlanInput> = tool.schema.lazy(() =>
   tool.schema.object({
-    id: tool.schema.string().describe("Stable unique ID for this todo node"),
     content: tool.schema.string().describe("Brief description of the task"),
-    status: tool.schema
-      .string()
-      .describe(
-        "Current status of the task: pending, in_progress, completed, cancelled",
-      ),
     priority: tool.schema
-      .string()
-      .describe("Priority level of the task: high, medium, low"),
+      .enum(["high", "medium", "low"])
+      .optional()
+      .describe("Priority level. Defaults to medium if omitted."),
     children: tool.schema
-      .array(TodoTreeNodeSchema)
-      .default([])
-      .describe("Nested subtasks for this todo node"),
+      .array(PlanInputSchema)
+      .optional()
+      .describe("Nested subtasks"),
   }),
 );
 
-export const TodoTreeArgsSchema = tool.schema.object({
-  todos: tool.schema
-    .array(TodoTreeNodeSchema)
-    .describe("Top-level nodes of the todo tree for the current session"),
-});
+import type { z } from "zod";
 
-let todoDatabase: Database | undefined;
-let todoDatabasePath: string | undefined;
+export const EditOpSchema = tool.schema.discriminatedUnion("type", [
+  tool.schema.object({
+    type: tool.schema.literal("add"),
+    parent_id: tool.schema
+      .string()
+      .optional()
+      .describe("ID of the parent node. Omit to add at the top level."),
+    after_id: tool.schema
+      .string()
+      .optional()
+      .describe("Insert after this sibling ID. Omit to append."),
+    content: tool.schema.string().describe("Task description"),
+    priority: tool.schema.enum(["high", "medium", "low"]).optional(),
+  }),
+  tool.schema.object({
+    type: tool.schema.literal("update"),
+    id: tool.schema.string().describe("ID of the node to update"),
+    content: tool.schema.string().optional(),
+    priority: tool.schema.enum(["high", "medium", "low"]).optional(),
+  }),
+  tool.schema.object({
+    type: tool.schema.literal("cancel"),
+    id: tool.schema.string().describe("ID of the node to cancel"),
+    reason: tool.schema
+      .string()
+      .describe("Required explanation for why this task is being cancelled"),
+  }),
+]);
 
-function resolveTodoDatabasePath(): string {
-  const configured = process.env[IMPROVED_TODO_DB_PATH_ENV]?.trim();
-  if (configured) return configured;
-  return DEFAULT_TODO_DB_PATH;
+// ─── Slug generation ─────────────────────────────────────────────────────────
+
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 64);
 }
 
-function initializeTodoSchema(database: Database): void {
-  database.run("PRAGMA journal_mode = WAL");
-  database.run("PRAGMA foreign_keys = OFF");
-  database.run(`
-    CREATE TABLE IF NOT EXISTS improved_todo_nodes (
-      session_id TEXT NOT NULL,
-      node_id TEXT NOT NULL,
-      parent_id TEXT,
-      content TEXT NOT NULL,
-      status TEXT NOT NULL,
-      priority TEXT NOT NULL,
-      depth INTEGER NOT NULL,
-      position INTEGER NOT NULL,
-      PRIMARY KEY (session_id, node_id)
-    )
-  `);
-  database.run(`
-    CREATE INDEX IF NOT EXISTS improved_todo_nodes_session_parent_position
-    ON improved_todo_nodes (session_id, parent_id, position)
-  `);
-}
-
-function getTodoDatabase(): Database {
-  const databasePath = resolveTodoDatabasePath();
-  if (todoDatabase && todoDatabasePath === databasePath) {
-    return todoDatabase;
+function uniqueSlug(content: string, existing: Set<string>): string {
+  const base = slugify(content);
+  let candidate = base;
+  let counter = 2;
+  while (existing.has(candidate)) {
+    candidate = `${base}-${counter}`;
+    counter++;
   }
-
-  todoDatabase?.close(false);
-  mkdirSync(dirname(databasePath), { recursive: true });
-  const database = new Database(databasePath, { create: true, strict: true });
-  initializeTodoSchema(database);
-  todoDatabase = database;
-  todoDatabasePath = databasePath;
-  return database;
+  existing.add(candidate);
+  return candidate;
 }
 
-export function resetTodoStoreForTesting(): void {
-  todoDatabase?.close(false);
-  todoDatabase = undefined;
-  todoDatabasePath = undefined;
+function assignSlugs(inputs: PlanInput[], existing: Set<string>): TodoNode[] {
+  return inputs.map((input) => ({
+    id: uniqueSlug(input.content, existing),
+    content: input.content,
+    status: "pending",
+    priority: input.priority ?? "medium",
+    children: assignSlugs(input.children ?? [], existing),
+  }));
 }
 
-function collectNodeIDs(
-  nodes: TodoTreeNode[],
-  ids: Set<string>,
-  ancestry: Set<string>,
-): void {
-  for (const node of nodes) {
-    if (ids.has(node.id)) {
-      throw new Error(`Duplicate todo node id: ${node.id}`);
-    }
-    if (ancestry.has(node.id)) {
-      throw new Error(`Cycle detected at todo node id: ${node.id}`);
-    }
-    ids.add(node.id);
-    const nextAncestry = new Set(ancestry);
-    nextAncestry.add(node.id);
-    collectNodeIDs(node.children, ids, nextAncestry);
-  }
+// ─── Path resolution ─────────────────────────────────────────────────────────
+
+function resolveTodoDir(): string {
+  return process.env[IMPROVED_TODO_DIR_ENV]?.trim() ?? DEFAULT_TODO_DIR;
 }
 
-export function validateTodoTree(todos: TodoTreeNode[]): void {
-  TodoTreeArgsSchema.parse({ todos });
-  collectNodeIDs(todos, new Set<string>(), new Set<string>());
+export function resolveTodoFilePath(sessionID: string): string {
+  return join(resolveTodoDir(), `${sessionID}.md`);
 }
 
-export function flattenTodoTree(
-  sessionID: string,
-  todos: TodoTreeNode[],
-): FlattenedTodoRow[] {
-  validateTodoTree(todos);
+// ─── Serialization ───────────────────────────────────────────────────────────
 
-  const rows: FlattenedTodoRow[] = [];
-  const visit = (
-    nodes: TodoTreeNode[],
-    parentID: string | null,
-    depth: number,
-  ): void => {
-    nodes.forEach((node, position) => {
-      rows.push({
-        sessionID,
-        nodeID: node.id,
-        parentID,
-        content: node.content,
-        status: node.status,
-        priority: node.priority,
-        depth,
-        position,
-      });
-      visit(node.children, node.id, depth + 1);
-    });
-  };
+const STATUS_CHAR: Record<TodoStatus, string> = {
+  pending: " ",
+  in_progress: "-",
+  completed: "x",
+  cancelled: "~",
+};
 
-  visit(todos, null, 0);
-  return rows;
+function serializeNode(node: TodoNode, depth: number): string {
+  const pad = "  ".repeat(depth);
+  const ch = STATUS_CHAR[node.status];
+  const pri = node.priority !== "medium" ? ` (${node.priority})` : "";
+  const cancelSuffix = node.cancelReason
+    ? `; cancelled: ${node.cancelReason}`
+    : "";
+  const line = `${pad}- [${ch}] ${node.content}${pri} <!-- ${node.id}${cancelSuffix} -->`;
+  const childLines = node.children
+    .map((c) => serializeNode(c, depth + 1))
+    .join("\n");
+  return childLines ? `${line}\n${childLines}` : line;
 }
 
-export function hydrateTodoTree(rows: FlattenedTodoRow[]): TodoTreeNode[] {
-  const childrenByParent = new Map<string | null, FlattenedTodoRow[]>();
-  for (const row of rows) {
-    const group = childrenByParent.get(row.parentID) ?? [];
-    group.push(row);
-    childrenByParent.set(row.parentID, group);
-  }
+export function serializeTodoForest(nodes: TodoNode[]): string {
+  return nodes.map((n) => serializeNode(n, 0)).join("\n") + "\n";
+}
 
-  const sortRows = (input: FlattenedTodoRow[]) =>
-    [...input].sort(
-      (left, right) =>
-        left.position - right.position || left.nodeID.localeCompare(right.nodeID),
+// ─── Parsing ─────────────────────────────────────────────────────────────────
+
+const CHAR_TO_STATUS: Record<string, TodoStatus> = {
+  " ": "pending",
+  "-": "in_progress",
+  x: "completed",
+  "~": "cancelled",
+};
+
+const LINE_RE = /^( *)- \[(.)\] (.*?) <!-- ([^>]+) -->$/;
+
+export function parseTodoForest(text: string): TodoNode[] {
+  const lines = text.split("\n").filter((l) => l.trim());
+  const stack: { node: TodoNode; depth: number }[] = [];
+  const roots: TodoNode[] = [];
+
+  for (const line of lines) {
+    const match = LINE_RE.exec(line);
+    if (!match) continue;
+
+    const depth = match[1].length / 2;
+    const statusChar = match[2];
+    const contentAndPriority = match[3];
+    const commentContent = match[4];
+
+    const priorityMatch = /^(.*?) \((high|medium|low)\)$/.exec(
+      contentAndPriority,
     );
+    const content = priorityMatch ? priorityMatch[1] : contentAndPriority;
+    const priority = (
+      priorityMatch ? priorityMatch[2] : "medium"
+    ) as TodoPriority;
 
-  const build = (parentID: string | null): TodoTreeNode[] =>
-    sortRows(childrenByParent.get(parentID) ?? []).map((row) => ({
-      id: row.nodeID,
-      content: row.content,
-      status: row.status,
-      priority: row.priority,
-      children: build(row.nodeID),
-    }));
+    const cancelIdx = commentContent.indexOf("; cancelled: ");
+    const id =
+      cancelIdx === -1
+        ? commentContent.trim()
+        : commentContent.slice(0, cancelIdx).trim();
+    const cancelReason =
+      cancelIdx === -1
+        ? undefined
+        : commentContent.slice(cancelIdx + "; cancelled: ".length);
 
-  return build(null);
-}
-
-export function storeTodoForest(
-  sessionID: string,
-  todos: TodoTreeNode[],
-): void {
-  const rows = flattenTodoTree(sessionID, todos);
-  const database = getTodoDatabase();
-  const deleteStatement = database.query(
-    "DELETE FROM improved_todo_nodes WHERE session_id = ?1",
-  );
-  const insertStatement = database.query(
-    `INSERT INTO improved_todo_nodes (
-      session_id,
-      node_id,
-      parent_id,
+    const node: TodoNode = {
+      id,
       content,
-      status,
+      status: CHAR_TO_STATUS[statusChar] ?? "pending",
       priority,
-      depth,
-      position
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-  );
+      ...(cancelReason !== undefined ? { cancelReason } : {}),
+      children: [],
+    };
 
-  const writeTransaction = database.transaction(() => {
-    deleteStatement.run(sessionID);
-    for (const row of rows) {
-      insertStatement.run(
-        row.sessionID,
-        row.nodeID,
-        row.parentID,
-        row.content,
-        row.status,
-        row.priority,
-        row.depth,
-        row.position,
-      );
+    while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
+      stack.pop();
     }
-  });
-  writeTransaction();
+    if (stack.length === 0) {
+      roots.push(node);
+    } else {
+      stack[stack.length - 1].node.children.push(node);
+    }
+    stack.push({ node, depth });
+  }
+
+  return roots;
 }
 
-export function loadTodoForest(sessionID: string): TodoTreeNode[] {
-  const database = getTodoDatabase();
-  const rows = database
-    .query<FlattenedTodoRow, [string]>(
-      `SELECT
-        session_id AS sessionID,
-        node_id AS nodeID,
-        parent_id AS parentID,
-        content,
-        status,
-        priority,
-        depth,
-        position
-      FROM improved_todo_nodes
-      WHERE session_id = ?1`,
-    )
-    .all(sessionID);
-  return hydrateTodoTree(rows);
+// ─── Load / Store ─────────────────────────────────────────────────────────────
+
+export function loadTodoForest(sessionID: string): TodoNode[] {
+  const filePath = resolveTodoFilePath(sessionID);
+  try {
+    return parseTodoForest(readFileSync(filePath, "utf-8"));
+  } catch {
+    return [];
+  }
 }
 
-export function countTodoNodes(todos: TodoTreeNode[]): number {
-  return todos.reduce(
-    (total, todo) => total + 1 + countTodoNodes(todo.children),
-    0,
-  );
+export function storeTodoForest(sessionID: string, nodes: TodoNode[]): void {
+  const filePath = resolveTodoFilePath(sessionID);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp`;
+  writeFileSync(tmp, serializeTodoForest(nodes), "utf-8");
+  renameSync(tmp, filePath);
 }
 
-function statusMarker(status: string): string {
+// ─── Tree utilities ───────────────────────────────────────────────────────────
+
+export function collectAllIDs(nodes: TodoNode[]): Set<string> {
+  const ids = new Set<string>();
+  const visit = (ns: TodoNode[]) => {
+    for (const n of ns) {
+      ids.add(n.id);
+      visit(n.children);
+    }
+  };
+  visit(nodes);
+  return ids;
+}
+
+export function findNode(nodes: TodoNode[], id: string): TodoNode | null {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const found = findNode(node.children, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function isTerminal(node: TodoNode): boolean {
+  return node.status === "completed" || node.status === "cancelled";
+}
+
+/**
+ * Returns the current actionable task: the first node in DFS order that is
+ * not yet terminal, whose preceding siblings are all terminal, and whose
+ * children are all terminal (i.e., it is the next leaf to work on).
+ */
+export function getCurrentTask(nodes: TodoNode[]): TodoNode | null {
+  for (const node of nodes) {
+    if (isTerminal(node)) continue;
+    if (node.children.length > 0 && !node.children.every(isTerminal)) {
+      return getCurrentTask(node.children);
+    }
+    return node;
+  }
+  return null;
+}
+
+export function countTodoNodes(nodes: TodoNode[]): number {
+  return nodes.reduce((total, n) => total + 1 + countTodoNodes(n.children), 0);
+}
+
+// ─── Plan ────────────────────────────────────────────────────────────────────
+
+export function createPlan(sessionID: string, inputs: PlanInput[]): TodoNode[] {
+  const existing = loadTodoForest(sessionID);
+  if (existing.length > 0) {
+    throw new Error(
+      "A plan already exists for this session. Use todo_edit to make surgical changes, or todo_advance to cancel tasks you no longer intend to do.",
+    );
+  }
+  const nodes = assignSlugs(inputs, new Set());
+  storeTodoForest(sessionID, nodes);
+  return nodes;
+}
+
+// ─── Advance ─────────────────────────────────────────────────────────────────
+
+export function advanceTodo(
+  sessionID: string,
+  id: string,
+  action: "complete" | "cancel",
+  reason?: string,
+): { updated: TodoNode[]; next: TodoNode | null } {
+  const nodes = loadTodoForest(sessionID);
+  const current = getCurrentTask(nodes);
+
+  if (!current) {
+    throw new Error("No current task — all tasks are complete or cancelled.");
+  }
+  if (current.id !== id) {
+    throw new Error(
+      `The current task is "${current.id}" ("${current.content}"). ` +
+        `You must advance the current task before any other.`,
+    );
+  }
+  if (action === "cancel" && !reason?.trim()) {
+    throw new Error("A reason is required when cancelling a task.");
+  }
+
+  const mutate = (ns: TodoNode[]): TodoNode[] =>
+    ns.map((n) => {
+      if (n.id === id) {
+        return {
+          ...n,
+          status: action === "complete" ? "completed" : "cancelled",
+          ...(action === "cancel" ? { cancelReason: reason } : {}),
+          children: mutate(n.children),
+        };
+      }
+      return { ...n, children: mutate(n.children) };
+    });
+
+  const updated = mutate(nodes);
+  storeTodoForest(sessionID, updated);
+  return { updated, next: getCurrentTask(updated) };
+}
+
+// ─── Edit ─────────────────────────────────────────────────────────────────────
+
+export function editTodos(sessionID: string, ops: EditOp[]): TodoNode[] {
+  let nodes = loadTodoForest(sessionID);
+
+  for (const op of ops) {
+    if (op.type === "add") {
+      const existing = collectAllIDs(nodes);
+      const newNode: TodoNode = {
+        id: uniqueSlug(op.content, existing),
+        content: op.content,
+        status: "pending",
+        priority: op.priority ?? "medium",
+        children: [],
+      };
+
+      if (!op.parent_id) {
+        if (op.after_id) {
+          const idx = nodes.findIndex((n) => n.id === op.after_id);
+          nodes = [
+            ...nodes.slice(0, idx + 1),
+            newNode,
+            ...nodes.slice(idx + 1),
+          ];
+        } else {
+          nodes = [...nodes, newNode];
+        }
+      } else {
+        const insert = (ns: TodoNode[]): TodoNode[] =>
+          ns.map((n) => {
+            if (n.id === op.parent_id) {
+              const siblings = op.after_id
+                ? (() => {
+                    const idx = n.children.findIndex(
+                      (c) => c.id === op.after_id,
+                    );
+                    return [
+                      ...n.children.slice(0, idx + 1),
+                      newNode,
+                      ...n.children.slice(idx + 1),
+                    ];
+                  })()
+                : [...n.children, newNode];
+              return { ...n, children: siblings };
+            }
+            return { ...n, children: insert(n.children) };
+          });
+        nodes = insert(nodes);
+      }
+    } else if (op.type === "update") {
+      const target = findNode(nodes, op.id);
+      if (!target) throw new Error(`No node with id "${op.id}"`);
+      if (isTerminal(target)) {
+        throw new Error(`Cannot update a ${target.status} node.`);
+      }
+      const update = (ns: TodoNode[]): TodoNode[] =>
+        ns.map((n) => {
+          if (n.id === op.id) {
+            return {
+              ...n,
+              ...(op.content !== undefined ? { content: op.content } : {}),
+              ...(op.priority !== undefined ? { priority: op.priority } : {}),
+            };
+          }
+          return { ...n, children: update(n.children) };
+        });
+      nodes = update(nodes);
+    } else if (op.type === "cancel") {
+      const target = findNode(nodes, op.id);
+      if (!target) throw new Error(`No node with id "${op.id}"`);
+      if (target.status === "completed") {
+        throw new Error("Cannot cancel a completed node.");
+      }
+      if (target.status === "cancelled") {
+        throw new Error(`Node "${op.id}" is already cancelled.`);
+      }
+      const cancel = (ns: TodoNode[]): TodoNode[] =>
+        ns.map((n) => {
+          if (n.id === op.id) {
+            return { ...n, status: "cancelled", cancelReason: op.reason };
+          }
+          return { ...n, children: cancel(n.children) };
+        });
+      nodes = cancel(nodes);
+    }
+  }
+
+  storeTodoForest(sessionID, nodes);
+  return nodes;
+}
+
+// ─── Display helpers ──────────────────────────────────────────────────────────
+
+function statusMarker(status: TodoStatus): string {
   if (status === "completed") return "[x]";
-  if (status === "in_progress") return "[~]";
-  if (status === "cancelled") return "[-]";
+  if (status === "in_progress") return "[-]";
+  if (status === "cancelled") return "[~]";
   return "[ ]";
 }
 
-function childSummary(children: TodoTreeNode[]): string {
+function childSummary(children: TodoNode[]): string {
   if (children.length === 0) return "";
   if (children.length === 1) return " (1 child)";
   return ` (${children.length} children)`;
 }
 
-export function summarizeTopLevelTodos(todos: TodoTreeNode[]): string[] {
+export function summarizeTopLevelTodos(todos: TodoNode[]): string[] {
   return todos.map(
     (todo) =>
       `- ${statusMarker(todo.status)} ${todo.content}${childSummary(todo.children)}`,
   );
 }
 
-function indent(depth: number): string {
-  return "  ".repeat(depth);
-}
-
-function markdownLine(todo: TodoTreeNode, depth: number): string {
-  return `${indent(depth)}- ${statusMarker(todo.status)} ${todo.content}`;
-}
-
-export function buildMarkdownTodoTree(todos: TodoTreeNode[]): string {
+export function buildMarkdownTodoTree(
+  todos: TodoNode[],
+  current: TodoNode | null,
+): string {
   const lines = ["# Todo Tree", ""];
 
-  const visit = (nodes: TodoTreeNode[], depth: number): void => {
+  const visit = (nodes: TodoNode[], depth: number): void => {
     for (const node of nodes) {
-      lines.push(markdownLine(node, depth));
+      const pad = "  ".repeat(depth);
+      const marker = statusMarker(node.status);
+      const isCurrent = current && node.id === current.id ? " ◄ current" : "";
+      lines.push(`${pad}- ${marker} ${node.content}${isCurrent}`);
       visit(node.children, depth + 1);
     }
   };
@@ -320,15 +500,24 @@ export function buildTodoTreeReminder(): string {
   ].join("\n");
 }
 
-export function buildTodoTreeResult(todos: TodoTreeNode[]) {
+export function buildTodoTreeResult(
+  todos: TodoNode[],
+  current: TodoNode | null,
+) {
   const verificationPassphrase =
     process.env[IMPROVED_TODO_VERIFICATION_PASSPHRASE_ENV]?.trim() ?? "";
+
+  const currentLine = current
+    ? `\nCurrent task: ${current.id} — "${current.content}"`
+    : "\nAll tasks complete.";
+
   const lines = [
     "Top-level todos:",
     ...summarizeTopLevelTodos(todos),
     "",
-    "Todo tree:",
+    "Todo tree (JSON):",
     JSON.stringify(todos, null, 2),
+    currentLine,
   ];
   if (verificationPassphrase) {
     lines.push("", `Verification passphrase: ${verificationPassphrase}`);
@@ -339,6 +528,7 @@ export function buildTodoTreeResult(todos: TodoTreeNode[]) {
     metadata: {
       topLevelCount: todos.length,
       totalCount: countTodoNodes(todos),
+      currentTaskId: current?.id ?? null,
     },
     output: lines.join("\n"),
   };
@@ -351,12 +541,16 @@ export function setToolDisplayMetadata(
       metadata?: Record<string, unknown>;
     }): void;
   },
-  todos: TodoTreeNode[],
+  todos: TodoNode[],
+  current: TodoNode | null,
 ): string {
-  const result = buildTodoTreeResult(todos);
-  context.metadata({
-    title: result.title,
-    metadata: result.metadata,
-  });
+  const result = buildTodoTreeResult(todos, current);
+  context.metadata({ title: result.title, metadata: result.metadata });
   return result.output;
+}
+
+// ─── Testing reset ────────────────────────────────────────────────────────────
+
+export function resetTodoStoreForTesting(): void {
+  // No in-memory cache — reads and writes happen on each call.
 }

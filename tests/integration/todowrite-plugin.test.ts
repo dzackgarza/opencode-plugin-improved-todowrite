@@ -17,24 +17,6 @@ const PRIMARY_AGENT_NAME = "plugin-proof";
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
-type ToolState = {
-  output?: unknown;
-  status?: string;
-};
-
-type SessionMessagePart = {
-  type?: string;
-  tool?: string;
-  state?: ToolState;
-};
-
-type SessionMessage = {
-  info?: {
-    role?: string;
-  };
-  parts?: SessionMessagePart[];
-};
-
 type RuntimeSurface = {
   baseUrl: string;
   cwd: string;
@@ -215,10 +197,13 @@ async function stopServer() {
   }
 }
 
-function runSessionCommand(args: string[]) {
+// ─── opx CLI helpers ──────────────────────────────────────────────────────────
+// Uses `opx` (from opencode-manager) instead of the former `opx-session` binary.
+
+function runOpxCommand(args: string[]) {
   const result = spawnSync(
     "npx",
-    ["--yes", `--package=${MANAGER_PACKAGE}`, "opx-session", ...args],
+    ["--yes", `--package=${MANAGER_PACKAGE}`, "opx", ...args],
     {
       cwd: runtime?.cwd ?? TOOL_DIR,
       env: {
@@ -231,31 +216,39 @@ function runSessionCommand(args: string[]) {
     },
   );
   if (result.error) throw result.error;
-
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
   if (result.status !== 0) {
     throw new Error(
-      `Manager command failed: opx-session ${args.join(" ")}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+      `opx command failed: opx ${args.join(" ")}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
     );
   }
-
   return { stdout, stderr };
 }
 
-function createSession(title: string) {
-  return JSON.parse(
-    runSessionCommand(["create", "--title", title, "--json"]).stdout,
-  ) as { id: string };
-}
-
-function promptSession(sessionID: string, prompt: string) {
-  runSessionCommand([
-    "prompt",
-    sessionID,
+/**
+ * Creates a session and injects the initial prompt without waiting for a reply.
+ * Returns the session ID.
+ */
+function beginSession(prompt: string): string {
+  const { stdout } = runOpxCommand([
+    "begin-session",
     prompt,
     "--agent",
     PRIMARY_AGENT_NAME,
+    "--json",
+  ]);
+  const data = JSON.parse(stdout) as { sessionID: string };
+  return data.sessionID;
+}
+
+function chatSession(sessionID: string, prompt: string) {
+  runOpxCommand([
+    "chat",
+    "--session",
+    sessionID,
+    "--prompt",
+    prompt,
     "--no-reply",
   ]);
 }
@@ -263,48 +256,61 @@ function promptSession(sessionID: string, prompt: string) {
 function safeDeleteSession(sessionID: string | undefined) {
   if (!sessionID) return;
   try {
-    runSessionCommand(["delete", sessionID, "--json"]);
+    runOpxCommand(["delete", "--session", sessionID]);
   } catch {
-    // best-effort cleanup in a noisy shared environment
+    // best-effort cleanup
   }
 }
 
-function readMessages(sessionID: string): SessionMessage[] {
-  const { stdout } = runSessionCommand(["messages", sessionID, "--json"]);
-  return JSON.parse(stdout) as SessionMessage[];
+type TranscriptStep = {
+  type: string;
+  tool?: string;
+  status?: string;
+  outputText?: string;
+};
+
+function readTranscriptSteps(sessionID: string): TranscriptStep[] {
+  const { stdout } = runOpxCommand([
+    "transcript",
+    "--session",
+    sessionID,
+    "--json",
+  ]);
+  const data = JSON.parse(stdout) as {
+    turns: Array<{
+      assistantMessages: Array<{ steps: Array<TranscriptStep | null> }>;
+    }>;
+  };
+  return data.turns.flatMap((turn) =>
+    turn.assistantMessages.flatMap((msg) =>
+      (msg.steps ?? []).filter((s): s is TranscriptStep => s !== null),
+    ),
+  );
 }
 
 async function waitForCompletedToolUse(
   sessionID: string,
   toolName: string,
   timeoutMs = 180_000,
-) {
+): Promise<{ output: string }> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const messages = readMessages(sessionID);
-    const match = messages
-      .filter((message) => message.info?.role === "assistant")
-      .flatMap((message) => message.parts ?? [])
-      .filter(
-        (part): part is Required<Pick<SessionMessagePart, "tool" | "state">> &
-          SessionMessagePart =>
-          part.type === "tool" &&
-          part.tool === toolName &&
-          typeof part.state === "object" &&
-          part.state !== null &&
-          part.state.status === "completed",
-      )
-      .at(-1);
+    const steps = readTranscriptSteps(sessionID);
+    const match = steps.findLast(
+      (s) =>
+        s.type === "tool" && s.tool === toolName && s.status === "completed",
+    );
 
     if (match) {
-      return match.state;
+      return { output: typeof match.outputText === "string" ? match.outputText : "" };
     }
     await wait(1_000);
   }
 
+  const steps = readTranscriptSteps(sessionID);
   throw new Error(
-    `Timed out waiting for completed tool use ${toolName}.\n${JSON.stringify(readMessages(sessionID), null, 2)}`,
+    `Timed out waiting for completed tool use "${toolName}".\n${JSON.stringify(steps, null, 2)}`,
   );
 }
 
@@ -317,42 +323,32 @@ afterAll(async () => {
 }, 30_000);
 
 describe("improved-todowrite live e2e", () => {
-  it("proves improved_todowrite and improved_todoread execute in a manager-driven live session", async () => {
+  it("proves todo_plan and todo_read execute in a manager-driven live session", async () => {
     const nonce = randomUUID();
-    const sessionID = createSession(`todowrite:${Date.now()}`).id;
+    let sessionID: string | undefined;
 
     try {
-      promptSession(
-        sessionID,
-        `Protocol: call \`improved_todowrite\` exactly once with \`todos\` set to exactly this JSON array: [{"id":"phase-1","content":"${nonce}","status":"pending","priority":"high","children":[]}]. Then call \`improved_todoread\` exactly once. Do not call any other tool. Do not use bash, shell, task, skills, CLI commands, file tools, or builtin todo tools. If either exact tool call is unavailable or impossible, stop immediately and reply with ONLY FAIL:PROOF_NOT_POSSIBLE. After both exact tool calls finish successfully, reply with ONLY READY.`,
+      sessionID = beginSession(
+        `Protocol: call \`todo_plan\` exactly once with \`todos\` set to a list containing exactly one item: ` +
+          `content="${nonce}", priority="high". ` +
+          `Then call \`todo_read\` exactly once. ` +
+          `Do not call any other tool. Do not use bash, shell, task, skills, CLI commands, file tools, or builtin todo tools. ` +
+          `If either exact tool call is unavailable or impossible, stop immediately and reply with ONLY FAIL:PROOF_NOT_POSSIBLE. ` +
+          `After both exact tool calls finish successfully, reply with ONLY READY.`,
       );
 
-      const writeTool = await waitForCompletedToolUse(
-        sessionID,
-        "improved_todowrite",
-      );
-      const writeOutput =
-        typeof writeTool.output === "string" ? writeTool.output : "";
+      const planTool = await waitForCompletedToolUse(sessionID, "todo_plan");
+      expect(planTool.output).toContain(VERIFICATION_PASSPHRASE);
+      expect(planTool.output).toContain(nonce);
 
-      expect(writeOutput).toContain(VERIFICATION_PASSPHRASE);
-      expect(writeOutput).toContain('"id": "phase-1"');
-      expect(writeOutput).toContain(nonce);
-
-      promptSession(
+      chatSession(
         sessionID,
-        "Call the tool `improved_todoread` directly. Do not use bash, shell, task, or any CLI command. After the tool call finishes, reply with ONLY READY.",
+        "Call the tool `todo_read` directly. Do not use any other tool. After the tool call finishes, reply with ONLY READY.",
       );
 
-      const readTool = await waitForCompletedToolUse(
-        sessionID,
-        "improved_todoread",
-      );
-      const readOutput =
-        typeof readTool.output === "string" ? readTool.output : "";
-
-      expect(readOutput).toContain(VERIFICATION_PASSPHRASE);
-      expect(readOutput).toContain(nonce);
-      expect(readOutput).toContain('"id": "phase-1"');
+      const readTool = await waitForCompletedToolUse(sessionID, "todo_read");
+      expect(readTool.output).toContain(VERIFICATION_PASSPHRASE);
+      expect(readTool.output).toContain(nonce);
     } finally {
       safeDeleteSession(sessionID);
     }
