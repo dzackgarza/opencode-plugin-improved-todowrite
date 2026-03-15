@@ -63,8 +63,12 @@ async function createIsolatedRuntime(cwd: string): Promise<{
 }> {
   const root = await mkdtemp(join(systemTmpdir(), "improved-todo-opencode-"));
   const configHome = join(root, "config");
+  const cacheHome = join(root, "cache");
+  const stateHome = join(root, "state");
   const testHome = join(root, "home");
   await mkdir(configHome, { recursive: true });
+  await mkdir(cacheHome, { recursive: true });
+  await mkdir(stateHome, { recursive: true });
   await mkdir(testHome, { recursive: true });
   return {
     runtime: {
@@ -73,6 +77,8 @@ async function createIsolatedRuntime(cwd: string): Promise<{
       env: {
         ...process.env,
         XDG_CONFIG_HOME: configHome,
+        XDG_CACHE_HOME: cacheHome,
+        XDG_STATE_HOME: stateHome,
         OPENCODE_TEST_HOME: testHome,
       },
     },
