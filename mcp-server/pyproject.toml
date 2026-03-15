@@ -7,7 +7,7 @@ name = "improved-todowrite-mcp"
 version = "1.0.0"
 description = "Thin FastMCP wrapper for the improved-todowrite CLI"
 requires-python = ">=3.11"
-dependencies = ["fastmcp>=2.0.0"]
+dependencies = ["fastmcp>=2.0.0", "pydantic>=2.11.3"]
 
 [project.scripts]
 improved-todowrite-mcp = "server:main"
