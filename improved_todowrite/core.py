@@ -84,9 +84,9 @@ def _collect_node_ids(nodes: list[TodoNode], ids: set[str], ancestry: set[str]) 
             raise ValueError(f"Cycle detected at todo node id: {node.id}")
 
         ids.add(node.id)
-        next_ancestry = set(ancestry)
-        next_ancestry.add(node.id)
-        _collect_node_ids(node.children, ids, next_ancestry)
+        ancestry.add(node.id)
+        _collect_node_ids(node.children, ids, ancestry)
+        ancestry.remove(node.id)
 
 
 def validate_todo_tree(todos: list[TodoNode]) -> list[TodoNode]:

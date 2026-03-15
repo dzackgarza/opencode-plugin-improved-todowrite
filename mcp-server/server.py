@@ -47,11 +47,15 @@ def _cli_command() -> list[str]:
     return ["uvx", "--from", CLI_REPOSITORY, "improved-todowrite"]
 
 
+def _cli_cwd() -> str:
+    return str(PROJECT_ROOT if LOCAL_PYPROJECT.exists() else SERVER_DIR)
+
+
 def _run_cli(command: str, args: list[str], stdin_text: str | None = None) -> dict:
     try:
         result = subprocess.run(
             [*_cli_command(), command, *args, "--format", "json"],
-            cwd=str(PROJECT_ROOT if LOCAL_PYPROJECT.exists() else SERVER_DIR),
+            cwd=_cli_cwd(),
             capture_output=True,
             input=stdin_text,
             text=True,
