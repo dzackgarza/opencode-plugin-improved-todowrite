@@ -95,3 +95,79 @@ class TestTodoTreeServer:
         other_text = other_result.content[0].text
         assert "Project A task" not in other_text
         assert "topLevelCount" in other_text  # empty result still has metadata
+
+    async def test_advance_completes_current_task(self, mcp_client: Client):
+        await mcp_client.call_tool(
+            name="todo_plan",
+            arguments={
+                "project_dir": PROJECT_DIR,
+                "todos": [
+                    {"content": "First task", "priority": "high"},
+                    {"content": "Second task"},
+                ],
+            },
+        )
+        read_before = await mcp_client.call_tool(
+            name="todo_read",
+            arguments={"project_dir": PROJECT_DIR},
+        )
+        assert "first-task" in read_before.content[0].text
+
+        advance_result = await mcp_client.call_tool(
+            name="todo_advance",
+            arguments={
+                "project_dir": PROJECT_DIR,
+                "id": "first-task",
+                "action": "complete",
+            },
+        )
+        advance_text = advance_result.content[0].text
+        assert "second-task" in advance_text
+
+    async def test_advance_rejects_wrong_task_id(self, mcp_client: Client):
+        await mcp_client.call_tool(
+            name="todo_plan",
+            arguments={
+                "project_dir": PROJECT_DIR,
+                "todos": [
+                    {"content": "First task"},
+                    {"content": "Second task"},
+                ],
+            },
+        )
+        result = await mcp_client.call_tool(
+            name="todo_advance",
+            arguments={
+                "project_dir": PROJECT_DIR,
+                "id": "second-task",
+                "action": "complete",
+            },
+        )
+        assert "current task" in result.content[0].text.lower()
+
+    async def test_edit_adds_and_updates_pending_tasks(self, mcp_client: Client):
+        await mcp_client.call_tool(
+            name="todo_plan",
+            arguments={
+                "project_dir": PROJECT_DIR,
+                "todos": [{"content": "Original task", "priority": "low"}],
+            },
+        )
+        edit_result = await mcp_client.call_tool(
+            name="todo_edit",
+            arguments={
+                "project_dir": PROJECT_DIR,
+                "ops": [
+                    {"type": "add", "content": "Appended task", "priority": "high"},
+                    {
+                        "type": "update",
+                        "id": "original-task",
+                        "content": "Revised task",
+                        "priority": "high",
+                    },
+                ],
+            },
+        )
+        edit_text = edit_result.content[0].text
+        assert "appended-task" in edit_text
+        assert "Revised task" in edit_text

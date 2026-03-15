@@ -6,10 +6,10 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir as systemTmpdir } from "node:os";
 import { join } from "node:path";
 
-const OPENCODE = process.env.OPENCODE_BIN || "opencode";
+const OPENCODE = "opencode";
 const TOOL_DIR = process.cwd();
 const HOST = "127.0.0.1";
-const MANAGER_PACKAGE = join(TOOL_DIR, "..", "opencode-manager");
+const MANAGER_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
 const SESSION_TIMEOUT_MS = 240_000;
