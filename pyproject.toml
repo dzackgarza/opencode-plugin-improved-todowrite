@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "improved-todowrite"
+version = "0.1.0"
+description = "CLI-first hierarchical todo tree storage for OpenCode adapters"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.11.3",
+  "typer>=0.16.1",
+]
+
+[project.scripts]
+improved-todowrite = "improved_todowrite.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]

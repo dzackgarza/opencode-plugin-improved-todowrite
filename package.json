@@ -25,7 +25,10 @@
   },
   "keywords": [
     "opencode",
-    "plugin"
+    "plugin",
+    "cli",
+    "typer",
+    "todo-tree"
   ],
   "funding": "https://ko-fi.com/I2I57UKJ8",
   "type": "module",
@@ -33,6 +36,9 @@
     ".": "./src/index.ts"
   },
   "files": [
-    "src/"
+    "src/",
+    "improved_todowrite/",
+    "pyproject.toml",
+    "uv.lock"
   ]
 }

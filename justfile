@@ -8,10 +8,13 @@ justfile-hygiene:
     exit 1
   fi
 
-install: install-ts install-mcp
+install: install-ts install-cli install-mcp
 
 install-ts:
   direnv exec "{{repo_root}}" bun install
+
+install-cli:
+  direnv exec "{{repo_root}}" uv sync --dev
 
 install-mcp:
   direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv sync --dev'
@@ -26,10 +29,13 @@ test:
   rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/opencode"
   exec direnv exec "{{repo_root}}" bun test
 
+cli-test:
+  direnv exec "{{repo_root}}" uv run pytest
+
 mcp-test:
   direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv run python -m pytest'
 
-check: justfile-hygiene typecheck test mcp-test
+check: justfile-hygiene typecheck test cli-test mcp-test
 
 setup-npm-trust:
   #!/usr/bin/env bash
@@ -57,4 +63,3 @@ bump-minor:
 # Push commits and tags to trigger CI release
 release: check
     git push && git push --tags
-
