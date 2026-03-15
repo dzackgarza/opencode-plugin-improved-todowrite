@@ -13,10 +13,10 @@ import json
 import hashlib
 import subprocess
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 mcp = FastMCP(
     name="improved-todowrite-mcp",
@@ -36,10 +36,15 @@ PLUGIN_ENTRY = PROJECT_ROOT / "src" / "index.ts"
 
 # ─── Input models ─────────────────────────────────────────────────────────────
 
+Priority = Literal["high", "medium", "low"]
+
+
 class PlanInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: str = Field(description="Brief description of the task")
-    priority: Literal["high", "medium", "low"] | None = Field(
-        default=None, description="Priority level. Defaults to medium if omitted."
+    priority: Priority | None = Field(
+        default=None, description="Priority level (high/medium/low). Defaults to medium if omitted."
     )
     children: list["PlanInput"] = Field(
         default_factory=list, description="Nested subtasks"
@@ -50,6 +55,8 @@ PlanInput.model_rebuild()
 
 
 class AddOp(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["add"]
     parent_id: str | None = Field(
         default=None, description="ID of the parent node. Omit to add at top level."
@@ -58,23 +65,27 @@ class AddOp(BaseModel):
         default=None, description="Insert after this sibling ID. Omit to append."
     )
     content: str = Field(description="Task description")
-    priority: Literal["high", "medium", "low"] | None = Field(default=None)
+    priority: Priority | None = Field(default=None)
 
 
 class UpdateOp(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["update"]
     id: str = Field(description="ID of the node to update")
     content: str | None = Field(default=None)
-    priority: Literal["high", "medium", "low"] | None = Field(default=None)
+    priority: Priority | None = Field(default=None)
 
 
 class CancelOp(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["cancel"]
     id: str = Field(description="ID of the node to cancel")
     reason: str = Field(description="Required explanation for why this task is cancelled")
 
 
-EditOp = AddOp | UpdateOp | CancelOp
+EditOp = Annotated[Union[AddOp, UpdateOp, CancelOp], Field(discriminator="type")]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

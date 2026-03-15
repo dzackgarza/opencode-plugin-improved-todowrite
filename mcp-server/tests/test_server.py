@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from server import mcp
@@ -171,3 +172,36 @@ class TestTodoTreeServer:
         edit_text = edit_result.content[0].text
         assert "appended-task" in edit_text
         assert "Revised task" in edit_text
+
+    async def test_plan_rejects_invalid_priority(self, mcp_client: Client):
+        with pytest.raises(ToolError):
+            await mcp_client.call_tool(
+                name="todo_plan",
+                arguments={
+                    "project_dir": PROJECT_DIR,
+                    "todos": [{"content": "Task", "priority": "urgent"}],
+                },
+            )
+
+    async def test_edit_rejects_status_field_in_update_op(self, mcp_client: Client):
+        await mcp_client.call_tool(
+            name="todo_plan",
+            arguments={
+                "project_dir": PROJECT_DIR,
+                "todos": [{"content": "Original task"}],
+            },
+        )
+        with pytest.raises(ToolError):
+            await mcp_client.call_tool(
+                name="todo_edit",
+                arguments={
+                    "project_dir": PROJECT_DIR,
+                    "ops": [
+                        {
+                            "type": "update",
+                            "id": "original-task",
+                            "status": "completed",
+                        }
+                    ],
+                },
+            )
