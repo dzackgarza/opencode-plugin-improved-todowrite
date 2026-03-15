@@ -1,12 +1,7 @@
-"""
-FastMCP wrapper for improved-todowrite.
+from __future__ import annotations
 
-Usage:
-    uv run fastmcp run server.py
-"""
-
-import json
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 from typing import Annotated
@@ -16,13 +11,13 @@ from pydantic import BaseModel, Field
 
 mcp = FastMCP(
     name="improved-todowrite-mcp",
-    instructions="Use when you need to read or write the hierarchical todo tree stored for an OpenCode session.",
+    instructions="Use when you need to read or write the hierarchical todo tree through the standalone improved-todowrite CLI.",
 )
 
 SERVER_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SERVER_DIR.parent
-MCP_SHIM = PROJECT_ROOT.parent / "opencode-plugin-mcp-shim" / "run-tool.ts"
-PLUGIN_ENTRY = PROJECT_ROOT / "src" / "index.ts"
+LOCAL_PYPROJECT = PROJECT_ROOT / "pyproject.toml"
+CLI_REPOSITORY = "git+https://github.com/dzackgarza/opencode-plugin-improved-todowrite.git"
 
 
 class TodoNode(BaseModel):
@@ -46,36 +41,44 @@ def _session_id_for_project_dir(project_dir: str) -> str:
     return f"mcp_proj_{digest}"
 
 
-def _run_tool(tool_name: str, args: dict) -> str | dict:
-    cmd = [
-        "bun",
-        "--no-deps",
-        "run",
-        str(MCP_SHIM),
-        str(PLUGIN_ENTRY),
-        tool_name,
-        json.dumps(args),
-    ]
+def _cli_command() -> list[str]:
+    if LOCAL_PYPROJECT.exists():
+        return ["uv", "run", "--project", str(PROJECT_ROOT), "improved-todowrite"]
+    return ["uvx", "--from", CLI_REPOSITORY, "improved-todowrite"]
 
-    result = subprocess.run(
-        cmd,
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+
+def _cli_cwd() -> str:
+    return str(PROJECT_ROOT if LOCAL_PYPROJECT.exists() else SERVER_DIR)
+
+
+def _run_cli(command: str, args: list[str], stdin_text: str | None = None) -> dict:
+    try:
+        result = subprocess.run(
+            [*_cli_command(), command, *args, "--format", "json"],
+            cwd=_cli_cwd(),
+            capture_output=True,
+            input=stdin_text,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "The improved-todowrite MCP adapter requires `uv` on PATH. Install uv before starting the server."
+        ) from exc
 
     if result.returncode != 0:
-        return f"Error executing {tool_name}: {result.stderr}"
-
-    stdout = result.stdout.strip()
-    if not stdout:
-        return ""
+        raise RuntimeError(
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"improved-todowrite {command} failed"
+        )
 
     try:
-        return json.loads(stdout)
-    except json.JSONDecodeError:
-        return stdout
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"improved-todowrite {command} returned invalid JSON:\n{result.stdout.strip()}"
+        ) from exc
 
 
 @mcp.tool(
@@ -99,14 +102,12 @@ async def improved_todowrite(
         Field(description="Top-level nodes of the todo tree for the current session"),
     ],
 ):
-    """Use when you need to persist the hierarchical todo tree for the current session."""
+    """Use when you need to persist the hierarchical todo tree for a stable project grouping."""
     session_id = _session_id_for_project_dir(project_dir)
-    return _run_tool(
-        "improved_todowrite",
-        {
-            "__mcp_session_id": session_id,
-            "todos": [todo.model_dump() for todo in todos],
-        },
+    return _run_cli(
+        "write",
+        [session_id, "-"],
+        stdin_text=json.dumps([todo.model_dump() for todo in todos]),
     )
 
 
@@ -127,9 +128,9 @@ async def improved_todoread(
         ),
     ],
 ):
-    """Use when you need to load the persisted hierarchical todo tree for the current session."""
+    """Use when you need to load the persisted hierarchical todo tree for a stable project grouping."""
     session_id = _session_id_for_project_dir(project_dir)
-    return _run_tool("improved_todoread", {"__mcp_session_id": session_id})
+    return _run_cli("read", [session_id])
 
 
 def main() -> None:

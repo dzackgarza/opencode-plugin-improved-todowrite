@@ -83,6 +83,7 @@ class TestTodoTreeServer:
                 "topLevelCount": 1,
                 "totalCount": 2,
             },
+            "todos": TODO_TREE,
         }
         assert read_payload == write_payload
         assert other_project_payload == {
@@ -92,4 +93,5 @@ class TestTodoTreeServer:
                 "topLevelCount": 0,
                 "totalCount": 0,
             },
+            "todos": [],
         }

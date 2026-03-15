@@ -4,14 +4,22 @@ import {
   buildTodoTreeReminder,
   IMPROVED_TODOREAD_DESCRIPTION,
   IMPROVED_TODOWRITE_DESCRIPTION,
-  loadTodoForest,
-  setToolDisplayMetadata,
-  storeTodoForest,
   TodoTreeNodeSchema,
 } from "./todo-tree.ts";
+import { readTodoTree, writeTodoTree } from "./cli-adapter.ts";
+import pkg from "../package.json" assert { type: "json" };
+
+const PLUGIN_VERSION = pkg.version;
+
+function withPluginVersion(description: string): string {
+  return `${description} (Plugin version: ${PLUGIN_VERSION})`;
+}
 
 export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
-  async function publishTodoTree(sessionID: string, todos: Parameters<typeof buildMarkdownTodoTree>[0]) {
+  async function publishTodoTree(
+    sessionID: string,
+    todos: Parameters<typeof buildMarkdownTodoTree>[0],
+  ) {
     if (!client.session?.prompt) return;
 
     await client.session.prompt({
@@ -42,10 +50,30 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
     });
   }
 
+  function setToolDisplayMetadata(
+    context: {
+      metadata(input: {
+        title?: string;
+        metadata?: Record<string, unknown>;
+      }): void;
+    },
+    result: {
+      title: string;
+      metadata: Record<string, unknown>;
+      output: string;
+    },
+  ): string {
+    context.metadata({
+      title: result.title,
+      metadata: result.metadata,
+    });
+    return result.output;
+  }
+
   return {
     tool: {
       improved_todowrite: tool({
-        description: IMPROVED_TODOWRITE_DESCRIPTION,
+        description: withPluginVersion(IMPROVED_TODOWRITE_DESCRIPTION),
         args: {
           todos: tool.schema.array(TodoTreeNodeSchema),
         },
@@ -56,13 +84,13 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
             always: ["*"],
             metadata: {},
           });
-          storeTodoForest(context.sessionID, args.todos);
-          await publishTodoTree(context.sessionID, args.todos);
-          return setToolDisplayMetadata(context, args.todos);
+          const result = await writeTodoTree(context.sessionID, args.todos);
+          await publishTodoTree(context.sessionID, result.todos);
+          return setToolDisplayMetadata(context, result);
         },
       }),
       improved_todoread: tool({
-        description: IMPROVED_TODOREAD_DESCRIPTION,
+        description: withPluginVersion(IMPROVED_TODOREAD_DESCRIPTION),
         args: {},
         async execute(_args, context) {
           await context.ask({
@@ -71,9 +99,9 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
             always: ["*"],
             metadata: {},
           });
-          const todos = loadTodoForest(context.sessionID);
-          await publishTodoTree(context.sessionID, todos);
-          return setToolDisplayMetadata(context, todos);
+          const result = await readTodoTree(context.sessionID);
+          await publishTodoTree(context.sessionID, result.todos);
+          return setToolDisplayMetadata(context, result);
         },
       }),
     },

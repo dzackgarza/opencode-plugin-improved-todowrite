@@ -3,12 +3,12 @@
 
 # improved-todowrite MCP Server
 
-`improved-todowrite` MCP server wraps `improved_todowrite` and `improved_todoread` with FastMCP.
+`improved-todowrite` MCP server is a thin FastMCP adapter over the standalone `improved-todowrite` CLI.
 
 ## Installation
 
 ```bash
-cd ./improved-todowrite/mcp-server
+cd ./mcp-server
 uv sync --dev
 ```
 
@@ -18,7 +18,9 @@ Run locally:
 uv run improved-todowrite-mcp
 ```
 
-Configure OpenCode for remote-style access using `uvx` from GitHub:
+The adapter shells out to the canonical CLI and returns the same JSON contract as the direct `read` and `write` commands.
+
+Configure OpenCode for remote-style access using `uvx`:
 
 ```json
 {
@@ -28,7 +30,7 @@ Configure OpenCode for remote-style access using `uvx` from GitHub:
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-todowrite/mcp-server",
+        "git+https://github.com/dzackgarza/opencode-plugin-improved-todowrite.git#subdirectory=mcp-server",
         "improved-todowrite-mcp"
       ]
     }
@@ -55,4 +57,4 @@ Read todos for a project directory.
 project_dir: string
 ```
 
-Hashing `project_dir` generates a stable synthetic session ID. This allows MCP callers to retrieve the same persisted tree.
+Hashing `project_dir` generates a stable synthetic session ID. This allows MCP callers to retrieve the same persisted tree while reusing the canonical CLI storage path.

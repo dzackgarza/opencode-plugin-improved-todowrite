@@ -6,7 +6,7 @@
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-todowrite/mcp-server",
+        "git+https://github.com/dzackgarza/opencode-plugin-improved-todowrite.git#subdirectory=mcp-server",
         "improved-todowrite-mcp"
       ]
     }
