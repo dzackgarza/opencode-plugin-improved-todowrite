@@ -10,12 +10,18 @@ const CLI_REPOSITORY =
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PYPROJECT_PATH = resolve(PACKAGE_ROOT, "pyproject.toml");
 
-function cliBaseCommand(): string[] {
+function cliInvocation(): { command: string; args: string[] } {
   if (existsSync(PYPROJECT_PATH)) {
-    return ["run", "--project", PACKAGE_ROOT, "improved-todowrite"];
+    return {
+      command: "uv",
+      args: ["run", "--project", PACKAGE_ROOT, "improved-todowrite"],
+    };
   }
 
-  return ["x", "--from", CLI_REPOSITORY, "improved-todowrite"];
+  return {
+    command: "uvx",
+    args: ["--from", CLI_REPOSITORY, "improved-todowrite"],
+  };
 }
 
 function parseTodoTreeResult(stdout: string, command: string): TodoTreeResult {
@@ -39,9 +45,10 @@ function runTodoCli(
   stdinText?: string,
 ): Promise<TodoTreeResult> {
   return new Promise((resolvePromise, rejectPromise) => {
+    const invocation = cliInvocation();
     const child = spawn(
-      "uv",
-      [...cliBaseCommand(), command, ...args, "--format", "json"],
+      invocation.command,
+      [...invocation.args, command, ...args, "--format", "json"],
       {
         cwd: PACKAGE_ROOT,
         env: {
@@ -66,7 +73,7 @@ function runTodoCli(
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         rejectPromise(
           new Error(
-            "The improved-todowrite adapters require `uv` on PATH. Install uv before using this plugin.",
+            "The improved-todowrite adapters require `uv`/`uvx` on PATH. Install uv before using this plugin.",
           ),
         );
         return;
