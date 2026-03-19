@@ -13,7 +13,7 @@ const MANAGER_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git"
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
 const SESSION_TIMEOUT_MS = 240_000;
-const PRIMARY_AGENT_NAME = "plugin-proof";
+const PRIMARY_AGENT_NAME = "opencode-plugin-improved-todowrite-proof";
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
