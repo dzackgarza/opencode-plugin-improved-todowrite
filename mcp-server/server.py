@@ -1,19 +1,17 @@
 """
 FastMCP wrapper for improved-todowrite.
 
-Exposes the four constrained workflow tools (todo_plan, todo_read,
-todo_advance, todo_edit) as MCP tools for use outside of OpenCode
-(e.g., Claude Desktop).
+This server invokes the standalone todowrite-manager CLI via bunx.
 
 Usage:
     uv run fastmcp run server.py
 """
 
-import json
 import hashlib
+import json
 import subprocess
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,11 +26,7 @@ mcp = FastMCP(
     ),
 )
 
-SERVER_DIR = Path(__file__).parent.resolve()
-PROJECT_ROOT = SERVER_DIR.parent
-MCP_SHIM = PROJECT_ROOT.parent / "opencode-plugin-mcp-shim" / "run-tool.ts"
-PLUGIN_ENTRY = PROJECT_ROOT / "src" / "index.ts"
-
+MANAGER_REPO = "git+file:///home/dzack/opencode-plugins/todowrite-manager"
 
 # ─── Input models ─────────────────────────────────────────────────────────────
 
@@ -44,9 +38,10 @@ class PlanInput(BaseModel):
 
     content: str = Field(description="Brief description of the task")
     priority: Priority | None = Field(
-        default=None, description="Priority level (high/medium/low). Defaults to medium if omitted."
+        default=None,
+        description="Priority level (high/medium/low). Defaults to medium if omitted.",
     )
-    children: list["PlanInput"] = Field(
+    children: list[PlanInput] = Field(
         default_factory=list, description="Nested subtasks"
     )
 
@@ -82,13 +77,16 @@ class CancelOp(BaseModel):
 
     type: Literal["cancel"]
     id: str = Field(description="ID of the node to cancel")
-    reason: str = Field(description="Required explanation for why this task is cancelled")
+    reason: str = Field(
+        description="Required explanation for why this task is cancelled"
+    )
 
 
-EditOp = Annotated[Union[AddOp, UpdateOp, CancelOp], Field(discriminator="type")]
+EditOp = Annotated[AddOp | UpdateOp | CancelOp, Field(discriminator="type")]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _session_id_for_project_dir(project_dir: str) -> str:
     normalized = str(Path(project_dir).expanduser().resolve())
@@ -96,39 +94,41 @@ def _session_id_for_project_dir(project_dir: str) -> str:
     return f"mcp_proj_{digest}"
 
 
-def _run_tool(tool_name: str, args: dict) -> str | dict:
+def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
     cmd = [
-        "bun",
-        "--no-deps",
-        "run",
-        str(MCP_SHIM),
-        str(PLUGIN_ENTRY),
+        "bunx",
+        "--from",
+        MANAGER_REPO,
+        "todowrite",
+        session_id,
         tool_name,
         json.dumps(args),
     ]
 
     result = subprocess.run(
         cmd,
-        cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=60,
     )
 
     if result.returncode != 0:
-        return f"Error executing {tool_name}: {result.stderr}"
+        return f"Error executing {tool_name}: {result.stderr or result.stdout}"
 
     stdout = result.stdout.strip()
     if not stdout:
         return ""
 
     try:
-        return json.loads(stdout)
+        data = json.loads(stdout)
+        # Return the display output for MCP compatibility if it exists
+        return data.get("display", data)
     except json.JSONDecodeError:
         return stdout
 
 
 # ─── Tools ────────────────────────────────────────────────────────────────────
+
 
 @mcp.tool(
     annotations={
@@ -142,7 +142,9 @@ def _run_tool(tool_name: str, args: dict) -> str | dict:
 async def todo_plan(
     project_dir: Annotated[
         str,
-        Field(description="Absolute project directory path used to scope the todo store"),
+        Field(
+            description="Absolute project directory path used to scope the todo store"
+        ),
     ],
     todos: Annotated[
         list[PlanInput],
@@ -155,9 +157,9 @@ async def todo_plan(
     """
     session_id = _session_id_for_project_dir(project_dir)
     return _run_tool(
+        session_id,
         "todo_plan",
         {
-            "__mcp_session_id": session_id,
             "todos": [t.model_dump(exclude_none=True) for t in todos],
         },
     )
@@ -175,12 +177,14 @@ async def todo_plan(
 async def todo_read(
     project_dir: Annotated[
         str,
-        Field(description="Absolute project directory path used to scope the todo store"),
+        Field(
+            description="Absolute project directory path used to scope the todo store"
+        ),
     ],
 ):
     """Read the current todo tree, including which task is currently active."""
     session_id = _session_id_for_project_dir(project_dir)
-    return _run_tool("todo_read", {"__mcp_session_id": session_id})
+    return _run_tool(session_id, "todo_read", {})
 
 
 @mcp.tool(
@@ -195,7 +199,9 @@ async def todo_read(
 async def todo_advance(
     project_dir: Annotated[
         str,
-        Field(description="Absolute project directory path used to scope the todo store"),
+        Field(
+            description="Absolute project directory path used to scope the todo store"
+        ),
     ],
     id: Annotated[
         str,
@@ -203,7 +209,9 @@ async def todo_advance(
     ],
     action: Annotated[
         Literal["complete", "cancel"],
-        Field(description="complete — mark done; cancel — mark cancelled with a reason"),
+        Field(
+            description="complete — mark done; cancel — mark cancelled with a reason"
+        ),
     ],
     reason: Annotated[
         str | None,
@@ -216,10 +224,10 @@ async def todo_advance(
     Tasks must be advanced in order; you cannot skip ahead.
     """
     session_id = _session_id_for_project_dir(project_dir)
-    args: dict = {"__mcp_session_id": session_id, "id": id, "action": action}
+    args: dict = {"id": id, "action": action}
     if reason is not None:
         args["reason"] = reason
-    return _run_tool("todo_advance", args)
+    return _run_tool(session_id, "todo_advance", args)
 
 
 @mcp.tool(
@@ -234,7 +242,9 @@ async def todo_advance(
 async def todo_edit(
     project_dir: Annotated[
         str,
-        Field(description="Absolute project directory path used to scope the todo store"),
+        Field(
+            description="Absolute project directory path used to scope the todo store"
+        ),
     ],
     ops: Annotated[
         list[EditOp],
@@ -242,8 +252,8 @@ async def todo_edit(
             description=(
                 "Ordered list of edit operations. "
                 "add: insert a new pending task. "
-                "update: change content or priority of a pending task by ID. "
-                "cancel: cancel a pending task with a required reason."
+                + "update: change content or priority of a pending task by ID. "
+                + "cancel: cancel a pending task with a required reason."
             )
         ),
     ],
@@ -254,9 +264,9 @@ async def todo_edit(
     """
     session_id = _session_id_for_project_dir(project_dir)
     return _run_tool(
+        session_id,
         "todo_edit",
         {
-            "__mcp_session_id": session_id,
             "ops": [op.model_dump(exclude_none=True) for op in ops],
         },
     )

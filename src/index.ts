@@ -1,37 +1,35 @@
-import { type Plugin, tool } from "@opencode-ai/plugin";
-import {
-  advanceTodo,
-  buildMarkdownTodoTree,
-  buildTodoTreeReminder,
-  createPlan,
-  EditOpSchema,
-  editTodos,
-  getCurrentTask,
-  loadTodoForest,
-  PlanInputSchema,
-  setToolDisplayMetadata,
-} from "./todo-tree.ts";
-import pkg from "../package.json" assert { type: "json" };
+import { type Plugin, tool } from '@opencode-ai/plugin';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-const PLUGIN_VERSION = pkg.version;
+const execFileAsync = promisify(execFile);
+const CLI_TIMEOUT_MS = 60_000;
 
-function v(description: string): string {
-  return `${description} (Plugin version: ${PLUGIN_VERSION})`;
+async function runTodowrite(
+  sessionID: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<any> {
+  const cliGitRepo = 'git+file:///home/dzack/opencode-plugins/todowrite-manager';
+  const { stdout } = await execFileAsync(
+    'bunx',
+    ['--from', cliGitRepo, 'todowrite', sessionID, toolName, JSON.stringify(args)],
+    {
+      timeout: CLI_TIMEOUT_MS,
+    },
+  );
+  return JSON.parse(stdout);
 }
 
 export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
-  async function publishTodoTree(
-    sessionID: string,
-    todos: Parameters<typeof buildMarkdownTodoTree>[0],
-    current: Parameters<typeof buildMarkdownTodoTree>[1],
-  ) {
+  async function publishTodoTree(sessionID: string, result: any) {
     if (!client.session?.prompt) return;
 
     await client.session.prompt({
       path: { id: sessionID },
       body: {
         noReply: true,
-        parts: [{ type: "text", text: buildMarkdownTodoTree(todos, current) }],
+        parts: [{ type: 'text', text: result.markdown }],
       },
     });
 
@@ -39,126 +37,89 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
       path: { id: sessionID },
       body: {
         noReply: true,
-        parts: [{ type: "text", synthetic: true, text: buildTodoTreeReminder() }],
+        parts: [{ type: 'text', synthetic: true, text: result.reminder }],
       },
     });
+  }
+
+  function setDisplay(context: any, display: any): string {
+    context.metadata({ title: display.title, metadata: display.metadata });
+    return display.output;
   }
 
   return {
     tool: {
       todo_plan: tool({
-        description: v(
-          "Create the initial hierarchical todo plan for this session. " +
-            "Call this once at the start of any multi-step task. " +
-            "Blocked if a plan already exists — use todo_edit for surgical changes. " +
-            "Break work into phases and subtasks; the order you list them is the order they must be completed.",
-        ),
+        description: 'Create the initial hierarchical todo plan for this session.',
         args: {
-          todos: tool.schema
-            .array(PlanInputSchema)
-            .describe("Top-level tasks. Each may contain nested subtasks."),
+          todos: tool.schema.array(tool.schema.any()).describe('Top-level tasks.'),
         },
         async execute(args, context) {
           await context.ask({
-            permission: "todo_plan",
-            patterns: ["*"],
-            always: ["*"],
+            permission: 'todo_plan',
+            patterns: ['*'],
+            always: ['*'],
             metadata: {},
           });
-          const nodes = createPlan(context.sessionID, args.todos);
-          const current = getCurrentTask(nodes);
-          await publishTodoTree(context.sessionID, nodes, current);
-          return setToolDisplayMetadata(context, nodes, current);
+          const result = await runTodowrite(context.sessionID, 'todo_plan', args);
+          await publishTodoTree(context.sessionID, result);
+          return setDisplay(context, result.display);
         },
       }),
 
       todo_read: tool({
-        description: v(
-          "Read the current todo tree for this session, including which task is active. " +
-            "Call this to recover task IDs before using todo_advance or todo_edit.",
-        ),
+        description: 'Read the current todo tree for this session.',
         args: {},
         async execute(_args, context) {
           await context.ask({
-            permission: "todo_read",
-            patterns: ["*"],
-            always: ["*"],
+            permission: 'todo_read',
+            patterns: ['*'],
+            always: ['*'],
             metadata: {},
           });
-          const nodes = loadTodoForest(context.sessionID);
-          const current = getCurrentTask(nodes);
-          await publishTodoTree(context.sessionID, nodes, current);
-          return setToolDisplayMetadata(context, nodes, current);
+          const result = await runTodowrite(context.sessionID, 'todo_read', {});
+          await publishTodoTree(context.sessionID, result);
+          return setDisplay(context, result.display);
         },
       }),
 
       todo_advance: tool({
-        description: v(
-          "Mark the current task as completed or cancelled. " +
-            "You MUST supply the exact ID of the current task (from todo_read or a prior tool result) — " +
-            "this proves you know what you are claiming to have finished. " +
-            "Tasks must be completed in order; you cannot skip ahead. " +
-            "Cancellation requires a documented reason.",
-        ),
+        description: 'Mark the current task as completed or cancelled.',
         args: {
-          id: tool.schema
-            .string()
-            .describe("ID of the current task, exactly as shown in the tree"),
+          id: tool.schema.string().describe('ID of the current task'),
           action: tool.schema
-            .enum(["complete", "cancel"])
-            .describe("complete — mark done; cancel — mark cancelled with a reason"),
-          reason: tool.schema
-            .string()
-            .optional()
-            .describe("Required when action is cancel. Explain why this task is being dropped."),
+            .enum(['complete', 'cancel'])
+            .describe('complete or cancel'),
+          reason: tool.schema.string().optional().describe('Required for cancel'),
         },
         async execute(args, context) {
           await context.ask({
-            permission: "todo_advance",
-            patterns: ["*"],
-            always: ["*"],
+            permission: 'todo_advance',
+            patterns: ['*'],
+            always: ['*'],
             metadata: {},
           });
-          const { updated, next } = advanceTodo(
-            context.sessionID,
-            args.id,
-            args.action,
-            args.reason,
-          );
-          await publishTodoTree(context.sessionID, updated, next);
-          return setToolDisplayMetadata(context, updated, next);
+          const result = await runTodowrite(context.sessionID, 'todo_advance', args);
+          await publishTodoTree(context.sessionID, result);
+          return setDisplay(context, result.display);
         },
       }),
 
       todo_edit: tool({
-        description: v(
-          "Make surgical changes to the pending portions of the todo tree: " +
-            "add new tasks, update content or priority of pending tasks, or cancel pending tasks with a reason. " +
-            "Does NOT change the status of tasks — use todo_advance for that. " +
-            "Completed and cancelled nodes are immutable history and cannot be edited or deleted. " +
-            "Use this for replanning, not for wholesale rewrites.",
-        ),
+        description: 'Make surgical changes to the pending portions of the todo tree.',
         args: {
-          ops: tool.schema
-            .array(EditOpSchema)
-            .describe(
-              "Ordered list of edit operations. " +
-                "add: insert a new pending task. " +
-                "update: change content or priority of a pending task by ID. " +
-                "cancel: cancel a pending task with a required reason.",
-            ),
+          ops: tool.schema.array(tool.schema.any()).describe('Edit operations'),
         },
         async execute(args, context) {
           await context.ask({
-            permission: "todo_edit",
-            patterns: ["*"],
-            always: ["*"],
+            permission: 'todo_edit',
+            patterns: ['*'],
+            always: ['*'],
             metadata: {},
           });
-          const updated = editTodos(context.sessionID, args.ops);
-          const current = getCurrentTask(updated);
-          await publishTodoTree(context.sessionID, updated, current);
-          return setToolDisplayMetadata(context, updated, current);
+          const result = await runTodowrite(context.sessionID, 'todo_edit', args);
+          await publishTodoTree(context.sessionID, result);
+          return setDisplay(context, result.display);
         },
       }),
     },
