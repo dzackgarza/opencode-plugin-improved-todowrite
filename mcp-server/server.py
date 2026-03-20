@@ -1,7 +1,7 @@
 """
 FastMCP wrapper for improved-todowrite.
 
-This server invokes the standalone todowrite-manager CLI via bunx.
+This server invokes the standalone todowrite CLI via uvx.
 
 Usage:
     uv run fastmcp run server.py
@@ -26,7 +26,7 @@ mcp = FastMCP(
     ),
 )
 
-MANAGER_REPO = "git+file:///home/dzack/opencode-plugins/todowrite-manager"
+MANAGER_REPO = "file:///home/dzack/opencode-plugins/clis/todowrite"
 
 # ─── Input models ─────────────────────────────────────────────────────────────
 
@@ -96,12 +96,13 @@ def _session_id_for_project_dir(project_dir: str) -> str:
 
 def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
     cmd = [
-        "bunx",
+        "uvx",
         "--from",
         MANAGER_REPO,
         "todowrite",
-        session_id,
+        "run-json",
         tool_name,
+        session_id,
         json.dumps(args),
     ]
 

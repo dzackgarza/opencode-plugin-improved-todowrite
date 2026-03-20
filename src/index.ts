@@ -4,16 +4,26 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 60_000;
+const CLI_SPEC =
+  process.env.TODOWRITE_CLI_SPEC ??
+  'file:///home/dzack/opencode-plugins/clis/todowrite';
 
 async function runTodowrite(
   sessionID: string,
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<any> {
-  const cliGitRepo = 'git+file:///home/dzack/opencode-plugins/todowrite-manager';
   const { stdout } = await execFileAsync(
-    'bunx',
-    ['--from', cliGitRepo, 'todowrite', sessionID, toolName, JSON.stringify(args)],
+    'uvx',
+    [
+      '--from',
+      CLI_SPEC,
+      'todowrite',
+      'run-json',
+      toolName,
+      sessionID,
+      JSON.stringify(args),
+    ],
     {
       timeout: CLI_TIMEOUT_MS,
     },
@@ -61,7 +71,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
             always: ['*'],
             metadata: {},
           });
-          const result = await runTodowrite(context.sessionID, 'todo_plan', args);
+          const result = await runTodowrite(context.sessionID, 'todo-plan', args);
           await publishTodoTree(context.sessionID, result);
           return setDisplay(context, result.display);
         },
@@ -77,7 +87,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
             always: ['*'],
             metadata: {},
           });
-          const result = await runTodowrite(context.sessionID, 'todo_read', {});
+          const result = await runTodowrite(context.sessionID, 'todo-read', {});
           await publishTodoTree(context.sessionID, result);
           return setDisplay(context, result.display);
         },
@@ -99,7 +109,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
             always: ['*'],
             metadata: {},
           });
-          const result = await runTodowrite(context.sessionID, 'todo_advance', args);
+          const result = await runTodowrite(context.sessionID, 'todo-advance', args);
           await publishTodoTree(context.sessionID, result);
           return setDisplay(context, result.display);
         },
@@ -117,7 +127,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
             always: ['*'],
             metadata: {},
           });
-          const result = await runTodowrite(context.sessionID, 'todo_edit', args);
+          const result = await runTodowrite(context.sessionID, 'todo-edit', args);
           await publishTodoTree(context.sessionID, result);
           return setDisplay(context, result.display);
         },
