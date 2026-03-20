@@ -208,8 +208,8 @@ async function stopServer() {
 
 function runOpxCommand(args: string[]) {
   const result = spawnSync(
-    "npx",
-    ["--yes", `--package=${MANAGER_PACKAGE}`, "opx", ...args],
+    "uvx",
+    ["--from", MANAGER_PACKAGE, "ocm", ...args],
     {
       cwd: runtime?.cwd ?? TOOL_DIR,
       env: {
@@ -251,9 +251,7 @@ function beginSession(prompt: string): string {
 function chatSession(sessionID: string, prompt: string) {
   runOpxCommand([
     "chat",
-    "--session",
     sessionID,
-    "--prompt",
     prompt,
     "--no-reply",
   ]);
@@ -262,7 +260,7 @@ function chatSession(sessionID: string, prompt: string) {
 function safeDeleteSession(sessionID: string | undefined) {
   if (!sessionID) return;
   try {
-    runOpxCommand(["delete", "--session", sessionID]);
+    runOpxCommand(["delete", sessionID]);
   } catch {
     // best-effort cleanup
   }
@@ -278,7 +276,6 @@ type TranscriptStep = {
 function readTranscriptSteps(sessionID: string): TranscriptStep[] {
   const { stdout } = runOpxCommand([
     "transcript",
-    "--session",
     sessionID,
     "--json",
   ]);
