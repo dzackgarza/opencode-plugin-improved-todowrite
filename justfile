@@ -21,11 +21,7 @@ typecheck:
   direnv exec "{{repo_root}}" bunx tsc --noEmit
 
 test:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  cd "{{repo_root}}"
-  rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/opencode"
-  exec direnv exec "{{repo_root}}" bun test
+  direnv exec "{{repo_root}}" bun test tests/integration
 
 mcp-test:
   direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv run python -m pytest'

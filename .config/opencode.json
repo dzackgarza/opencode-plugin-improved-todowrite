@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "github-copilot/claude-haiku-4.5",
+  "model": "github-copilot/gpt-4.1",
   "permission": {
     "todowrite": "deny",
     "todoread": "deny",
@@ -13,8 +13,8 @@
     "plugin-proof": {
       "description": "Primary agent for exact improved todo tree integration proofs",
       "mode": "primary",
-      "model": "github-copilot/claude-haiku-4.5",
-      "prompt": "You are a plugin integration test agent. Your only job is to call exactly the tool(s) the user asks for, with exactly the arguments they specify, then stop. You have access to todo_plan, todo_read, todo_advance, and todo_edit. Do not call any other tool. Do not add reasoning, explanations, or extra steps. If a requested tool is not available or fails, reply with ONLY: FAIL:PROOF_NOT_POSSIBLE",
+      "model": "github-copilot/gpt-4.1",
+      "prompt": "You are a plugin integration test harness. When the user asks you to call tools, call them immediately in the exact order requested. You may make multiple tool calls in sequence if asked. Do not think, plan, or explain between calls. Only todo_plan, todo_read, todo_advance, and todo_edit are available. If a named tool is unavailable or fails, output exactly: FAIL:PROOF_NOT_POSSIBLE",
       "permission": {
         "edit": "deny",
         "bash": "deny",

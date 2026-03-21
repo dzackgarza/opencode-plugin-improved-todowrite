@@ -3,15 +3,17 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 
-const OPENCODE = "opencode";
-// TOOL_DIR is the plugin root (.config/ dir so OpenCode picks up the project-local config)
+// TOOL_DIR is the plugin root (.config/ dir so OpenCode picks up the project-local
+// config and discovers the plugin via .config/.opencode/plugins/
 const TOOL_DIR = new URL("../../.config", import.meta.url).pathname;
 const HOST = "127.0.0.1";
 const MANAGER_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
+const WAIT_TIMEOUT_SEC = 180;
 const SESSION_TIMEOUT_MS = 240_000;
-const PRIMARY_AGENT_NAME = "plugin-proof";
+const AGENT_NAME = "plugin-proof";
+
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
@@ -37,10 +39,7 @@ async function findFreePort(): Promise<number> {
       }
       const { port } = address;
       server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+        if (error) { reject(error); return; }
         resolve(port);
       });
     });
@@ -52,27 +51,22 @@ async function startServer() {
   baseUrl = `http://${HOST}:${serverPort}`;
   serverLogs = "";
 
-  // Run from TOOL_DIR (.config/) so OpenCode picks up opencode.json + plugins/
-  // from that directory (project-local config with plugin-proof agent).
   const startedServer = spawn(
-    OPENCODE,
+    "opencode",
     [
       "serve",
-      "--hostname",
-      HOST,
-      "--port",
-      String(serverPort),
+      "--hostname", HOST,
+      "--port", String(serverPort),
       "--print-logs",
-      "--log-level",
-      "INFO",
+      "--log-level", "INFO",
     ],
     {
       cwd: TOOL_DIR,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        // Forward the passphrase so the todowrite CLI subprocess can embed it
-        // in tool output (read via IMPROVED_TODO_VERIFICATION_PASSPHRASE).
+        // Forward the passphrase so the todowrite CLI subprocess embeds it in
+        // tool output (read via IMPROVED_TODO_VERIFICATION_PASSPHRASE).
         IMPROVED_TODO_VERIFICATION_PASSPHRASE: VERIFICATION_PASSPHRASE,
       },
     },
@@ -82,52 +76,38 @@ async function startServer() {
   const ready = `opencode server listening on ${baseUrl}`;
   const deadline = Date.now() + SERVER_START_TIMEOUT_MS;
 
-  const capture = (chunk: Buffer | string) => {
-    serverLogs += chunk.toString();
-  };
+  const capture = (chunk: Buffer | string) => { serverLogs += chunk.toString(); };
   startedServer.stdout.on("data", capture);
   startedServer.stderr.on("data", capture);
 
   while (Date.now() < deadline) {
-    if (serverLogs.includes(ready)) {
-      return;
-    }
+    if (serverLogs.includes(ready)) return;
     if (startedServer.exitCode !== null) {
-      throw new Error(
-        `OpenCode server exited early (${startedServer.exitCode}).\n${serverLogs}`,
-      );
+      throw new Error(`OpenCode server exited early (${startedServer.exitCode}).\n${serverLogs}`);
     }
     await wait(200);
   }
 
-  throw new Error(
-    `Timed out waiting for OpenCode server at ${baseUrl}.\n${serverLogs}`,
-  );
+  throw new Error(`Timed out waiting for OpenCode server at ${baseUrl}.\n${serverLogs}`);
 }
 
 async function stopServer() {
   if (!serverProcess || serverProcess.exitCode !== null) return;
-
   serverProcess.kill("SIGINT");
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     if (serverProcess.exitCode !== null) return;
     await wait(100);
   }
-
   serverProcess.kill("SIGKILL");
 }
 
-function runOpxCommand(args: string[]) {
+function runOcm(args: string[]) {
   const result = spawnSync(
     "uvx",
     ["--from", MANAGER_PACKAGE, "ocm", ...args],
     {
-      cwd: TOOL_DIR,
-      env: {
-        ...process.env,
-        OPENCODE_BASE_URL: baseUrl,
-      },
+      env: { ...process.env, OPENCODE_BASE_URL: baseUrl },
       encoding: "utf8",
       timeout: SESSION_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
@@ -137,40 +117,9 @@ function runOpxCommand(args: string[]) {
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
   if (result.status !== 0) {
-    throw new Error(
-      `ocm command failed: ocm ${args.join(" ")}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
-    );
+    throw new Error(`ocm ${args.join(" ")} failed\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
   }
   return { stdout, stderr };
-}
-
-function beginSession(prompt: string): string {
-  const { stdout } = runOpxCommand([
-    "begin-session",
-    prompt,
-    "--agent",
-    PRIMARY_AGENT_NAME,
-    "--json",
-  ]);
-  const data = JSON.parse(stdout) as { sessionID: string };
-  return data.sessionID;
-}
-
-function chatSession(sessionID: string, prompt: string) {
-  runOpxCommand([
-    "chat",
-    sessionID,
-    prompt,
-  ]);
-}
-
-function safeDeleteSession(sessionID: string | undefined) {
-  if (!sessionID) return;
-  try {
-    runOpxCommand(["delete", sessionID]);
-  } catch {
-    // best-effort cleanup
-  }
 }
 
 type TranscriptStep = {
@@ -181,11 +130,7 @@ type TranscriptStep = {
 };
 
 function readTranscriptSteps(sessionID: string): TranscriptStep[] {
-  const { stdout } = runOpxCommand([
-    "transcript",
-    sessionID,
-    "--json",
-  ]);
+  const { stdout } = runOcm(["transcript", sessionID, "--json"]);
   const data = JSON.parse(stdout) as {
     turns: Array<{
       assistantMessages: Array<{ steps: Array<TranscriptStep | null> }>;
@@ -198,38 +143,6 @@ function readTranscriptSteps(sessionID: string): TranscriptStep[] {
   );
 }
 
-async function waitForCompletedToolUse(
-  sessionID: string,
-  toolName: string,
-  timeoutMs = 180_000,
-): Promise<{ output: string }> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const steps = readTranscriptSteps(sessionID);
-    const match = steps.findLast(
-      (s) =>
-        s.type === "tool" && s.tool === toolName && s.status === "completed",
-    );
-
-    if (match) {
-      return { output: typeof match.outputText === "string" ? match.outputText : "" };
-    }
-    await wait(1_000);
-  }
-
-  let rawTranscript = "(unavailable)";
-  try {
-    const { stdout } = runOpxCommand(["transcript", sessionID, "--json"]);
-    rawTranscript = stdout;
-  } catch (e) {
-    rawTranscript = String(e);
-  }
-  throw new Error(
-    `Timed out waiting for completed tool use "${toolName}".\nRAW TRANSCRIPT:\n${rawTranscript}`,
-  );
-}
-
 beforeAll(async () => {
   await startServer();
 }, 120_000);
@@ -239,29 +152,44 @@ afterAll(async () => {
 }, 30_000);
 
 describe("improved-todowrite live e2e", () => {
-  it("proves todo_plan and todo_read execute in a manager-driven live session", async () => {
+  it("proves todo_plan and todo_read execute and embed the verification passphrase", async () => {
     const nonce = randomUUID();
     let sessionID: string | undefined;
 
     try {
-      sessionID = beginSession(
-        `Call todo_plan with todos=[{content:"${nonce}",priority:"high"}]. Reply READY when done.`,
+      // Single turn: ask model to call both tools sequentially.
+      const { stdout } = runOcm([
+        "begin-session",
+        `Call todo_plan with todos=[{content:"${nonce}",priority:"high"}]. Then call todo_read.`,
+        "--agent", AGENT_NAME,
+        "--json",
+      ]);
+      ({ sessionID } = JSON.parse(stdout) as { sessionID: string });
+
+      // Block until the model finishes the turn (both tool calls complete).
+      runOcm(["wait", sessionID, `--timeout-sec=${WAIT_TIMEOUT_SEC}`]);
+
+      // Read transcript once — no polling.
+      const steps = readTranscriptSteps(sessionID);
+      const rawTranscript = JSON.stringify(steps, null, 2);
+
+      const planStep = steps.find(
+        (s) => s.type === "tool" && s.tool === "todo_plan" && s.status === "completed",
       );
+      expect(planStep, `todo_plan step missing. Steps:\n${rawTranscript}`).toBeDefined();
+      expect(planStep!.outputText).toContain(VERIFICATION_PASSPHRASE);
+      expect(planStep!.outputText).toContain(nonce);
 
-      const planTool = await waitForCompletedToolUse(sessionID, "todo_plan");
-      expect(planTool.output).toContain(VERIFICATION_PASSPHRASE);
-      expect(planTool.output).toContain(nonce);
-
-      chatSession(
-        sessionID,
-        "Call the tool `todo_read` directly. Do not use any other tool. After the tool call finishes, reply with ONLY READY.",
+      const readStep = steps.find(
+        (s) => s.type === "tool" && s.tool === "todo_read" && s.status === "completed",
       );
-
-      const readTool = await waitForCompletedToolUse(sessionID, "todo_read");
-      expect(readTool.output).toContain(VERIFICATION_PASSPHRASE);
-      expect(readTool.output).toContain(nonce);
+      expect(readStep, `todo_read step missing. Steps:\n${rawTranscript}`).toBeDefined();
+      expect(readStep!.outputText).toContain(VERIFICATION_PASSPHRASE);
+      expect(readStep!.outputText).toContain(nonce);
     } finally {
-      safeDeleteSession(sessionID);
+      if (sessionID) {
+        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+      }
     }
   }, 200_000);
 });
