@@ -33,7 +33,9 @@ test: justfile-hygiene
   TEST_SANDBOX_CONFIG_JSON="{{repo_root}}/tests/integration/opencode.json" \
     just -f "$root_justfile" test-sandbox-up
   source "{{repo_root}}/../../.test-sandbox-env.sh"
-  direnv exec "{{repo_root}}" bun test tests/integration
+  export IMPROVED_TODOWRITE_TEST_PASSPHRASE="SWORDFISH-TODO-TREE"
+  export IMPROVED_TODO_VERIFICATION_PASSPHRASE="SWORDFISH-TODO-TREE"
+  cd "{{repo_root}}" && bun test tests/integration
 
 mcp-test:
   direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv run python -m pytest'
