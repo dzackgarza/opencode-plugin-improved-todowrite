@@ -10,7 +10,6 @@ const HOST = "127.0.0.1";
 const MANAGER_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
-const WAIT_TIMEOUT_SEC = 180;
 const SESSION_TIMEOUT_MS = 240_000;
 const AGENT_NAME = "plugin-proof";
 
@@ -22,7 +21,7 @@ let serverPort = 0;
 let serverProcess: ChildProcess | undefined;
 let serverLogs = "";
 
-function wait(ms: number) {
+function waitMs(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -85,7 +84,7 @@ async function startServer() {
     if (startedServer.exitCode !== null) {
       throw new Error(`OpenCode server exited early (${startedServer.exitCode}).\n${serverLogs}`);
     }
-    await wait(200);
+    await waitMs(200);
   }
 
   throw new Error(`Timed out waiting for OpenCode server at ${baseUrl}.\n${serverLogs}`);
@@ -97,7 +96,7 @@ async function stopServer() {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     if (serverProcess.exitCode !== null) return;
-    await wait(100);
+    await waitMs(100);
   }
   serverProcess.kill("SIGKILL");
 }
@@ -120,6 +119,44 @@ function runOcm(args: string[]) {
     throw new Error(`ocm ${args.join(" ")} failed\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
   }
   return { stdout, stderr };
+}
+
+// Create a session directly via the OpenCode REST API (no ocm wrapper).
+// Returns the raw session ID string.
+async function createSession(): Promise<string> {
+  const res = await fetch(`${baseUrl}/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "test:improved-todowrite" }),
+  });
+  if (!res.ok) {
+    throw new Error(`Create session failed (${res.status}): ${await res.text()}`);
+  }
+  const data = await res.json() as { id: string };
+  if (typeof data.id !== "string" || !data.id) {
+    throw new Error(`Create session returned no id: ${JSON.stringify(data)}`);
+  }
+  return data.id;
+}
+
+// Submit prompt to OpenCode REST API without waiting for the SSE stream to complete.
+// The model run (including tool execution) happens server-side; use `ocm wait` to
+// block until the session is idle after calling this.
+async function submitPrompt(sessionID: string, prompt: string): Promise<void> {
+  const res = await fetch(`${baseUrl}/session/${sessionID}/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      parts: [{ type: "text", text: prompt }],
+      agent: AGENT_NAME,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Submit prompt failed (${res.status}): ${await res.text()}`);
+  }
+  // Do not consume the body: the SSE stream runs server-side whether or not we read it.
+  // Server continues processing tools + final model response asynchronously.
+  await res.body?.cancel().catch(() => {});
 }
 
 type TranscriptStep = {
@@ -157,17 +194,27 @@ describe("improved-todowrite live e2e", () => {
     let sessionID: string | undefined;
 
     try {
-      // Single turn: ask model to call both tools sequentially.
-      const { stdout } = runOcm([
-        "begin-session",
-        `Call todo_plan with todos=[{content:"${nonce}",priority:"high"}]. Then call todo_read.`,
-        "--agent", AGENT_NAME,
-        "--json",
-      ]);
-      ({ sessionID } = JSON.parse(stdout) as { sessionID: string });
+      // Create session and submit prompt via REST API (not ocm begin-session).
+      // ocm begin-session requires assistant text after the turn; gpt-4.1 makes tool
+      // calls without text in its first generation, so begin-session would fail.
+      // We submit the prompt and immediately disconnect from the SSE stream; the
+      // server continues processing tools server-side.
+      //
+      // Prompt design: interleave todo_plan → todo_advance → todo_read so that
+      // todo_read returns DIFFERENT state (in-progress) from what todo_plan returned
+      // (pending). This prevents gpt-4.1 from skipping todo_read as redundant.
+      sessionID = await createSession();
+      await submitPrompt(
+        sessionID,
+        `Step 1: call todo_plan with todos=[{content:"${nonce}",priority:"high"}].` +
+        ` Step 2: call todo_advance with no arguments to mark the first task in-progress.` +
+        ` Step 3: call todo_read to verify the updated state.` +
+        ` These are three separate verification steps that MUST all be called in order.` +
+        ` Reply READY after all three calls complete.`,
+      );
 
-      // Block until the model finishes the turn (both tool calls complete).
-      runOcm(["wait", sessionID, `--timeout-sec=${WAIT_TIMEOUT_SEC}`]);
+      // Block until the session is fully idle (tools done, final reply produced).
+      runOcm(["wait", sessionID, "--timeout-sec=180"]);
 
       // Read transcript once — no polling.
       const steps = readTranscriptSteps(sessionID);
