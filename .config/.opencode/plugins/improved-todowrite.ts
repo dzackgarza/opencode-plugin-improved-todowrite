@@ -1,0 +1,1 @@
+/home/dzack/opencode-plugins/plugins/opencode-plugin-improved-todowrite/src/index.ts
