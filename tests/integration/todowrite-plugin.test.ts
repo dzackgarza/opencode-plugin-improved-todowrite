@@ -2,33 +2,23 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir as systemTmpdir } from "node:os";
-import { join } from "node:path";
 
 const OPENCODE = "opencode";
-const TOOL_DIR = process.cwd();
+// TOOL_DIR is the plugin root (.config/ dir so OpenCode picks up the project-local config)
+const TOOL_DIR = new URL("../../.config", import.meta.url).pathname;
 const HOST = "127.0.0.1";
 const MANAGER_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
 const SESSION_TIMEOUT_MS = 240_000;
-const PRIMARY_AGENT_NAME = "opencode-plugin-improved-todowrite-proof";
+const PRIMARY_AGENT_NAME = "plugin-proof";
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
-
-type RuntimeSurface = {
-  baseUrl: string;
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-};
 
 let baseUrl = "";
 let serverPort = 0;
 let serverProcess: ChildProcess | undefined;
 let serverLogs = "";
-let runtime: RuntimeSurface | undefined;
-let runtimeCleanup: (() => Promise<void>) | undefined;
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -57,90 +47,16 @@ async function findFreePort(): Promise<number> {
   });
 }
 
-async function createIsolatedRuntime(cwd: string): Promise<{
-  runtime: RuntimeSurface;
-  cleanup: () => Promise<void>;
-}> {
-  const root = await mkdtemp(join(systemTmpdir(), "improved-todo-opencode-"));
-  const configHome = join(root, "config");
-  const cacheHome = join(root, "cache");
-  const stateHome = join(root, "state");
-  const testHome = join(root, "home");
-  await mkdir(configHome, { recursive: true });
-  await mkdir(cacheHome, { recursive: true });
-  await mkdir(stateHome, { recursive: true });
-  await mkdir(testHome, { recursive: true });
-  return {
-    runtime: {
-      baseUrl: "",
-      cwd,
-      env: {
-        ...process.env,
-        XDG_CONFIG_HOME: configHome,
-        XDG_CACHE_HOME: cacheHome,
-        XDG_STATE_HOME: stateHome,
-        OPENCODE_TEST_HOME: testHome,
-      },
-    },
-    cleanup: async () => {
-      await rm(root, { recursive: true, force: true });
-    },
-  };
-}
-
-async function resolveDirenvEnv(
-  cwdForDirenv: string,
-  env: NodeJS.ProcessEnv,
-): Promise<NodeJS.ProcessEnv> {
-  const result = spawnSync(
-    "direnv",
-    ["exec", cwdForDirenv, "env", "-0"],
-    {
-      cwd: cwdForDirenv,
-      env,
-      encoding: "utf8",
-      timeout: 30_000,
-      maxBuffer: MAX_BUFFER,
-    },
-  );
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      `Failed to resolve direnv environment for ${cwdForDirenv}.\nSTDOUT:\n${result.stdout ?? ""}\nSTDERR:\n${result.stderr ?? ""}`,
-    );
-  }
-
-  const resolved: NodeJS.ProcessEnv = {};
-  for (const entry of (result.stdout ?? "").split("\0")) {
-    if (!entry) continue;
-    const separator = entry.indexOf("=");
-    if (separator < 0) continue;
-    resolved[entry.slice(0, separator)] = entry.slice(separator + 1);
-  }
-  return resolved;
-}
-
 async function startServer() {
-  spawnSync("direnv", ["allow", TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
-
   serverPort = await findFreePort();
   baseUrl = `http://${HOST}:${serverPort}`;
-  const isolated = await createIsolatedRuntime(TOOL_DIR);
-  const resolvedEnv = await resolveDirenvEnv(TOOL_DIR, isolated.runtime.env);
-  runtime = {
-    ...isolated.runtime,
-    baseUrl,
-    env: resolvedEnv,
-  };
-  runtimeCleanup = isolated.cleanup;
   serverLogs = "";
 
+  // Run from TOOL_DIR (.config/) so OpenCode picks up opencode.json + plugins/
+  // from that directory (project-local config with plugin-proof agent).
   const startedServer = spawn(
-    "direnv",
+    OPENCODE,
     [
-      "exec",
-      TOOL_DIR,
-      OPENCODE,
       "serve",
       "--hostname",
       HOST,
@@ -152,8 +68,13 @@ async function startServer() {
     ],
     {
       cwd: TOOL_DIR,
-      env: runtime.env,
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // Forward the passphrase so the todowrite CLI subprocess can embed it
+        // in tool output (read via IMPROVED_TODO_VERIFICATION_PASSPHRASE).
+        IMPROVED_TODO_VERIFICATION_PASSPHRASE: VERIFICATION_PASSPHRASE,
+      },
     },
   );
   serverProcess = startedServer;
@@ -173,48 +94,39 @@ async function startServer() {
     }
     if (startedServer.exitCode !== null) {
       throw new Error(
-        `Custom OpenCode server exited early (${startedServer.exitCode}).\n${serverLogs}`,
+        `OpenCode server exited early (${startedServer.exitCode}).\n${serverLogs}`,
       );
     }
     await wait(200);
   }
 
   throw new Error(
-    `Timed out waiting for custom OpenCode server at ${baseUrl}.\n${serverLogs}`,
+    `Timed out waiting for OpenCode server at ${baseUrl}.\n${serverLogs}`,
   );
 }
 
 async function stopServer() {
-  try {
-    if (!serverProcess || serverProcess.exitCode !== null) return;
+  if (!serverProcess || serverProcess.exitCode !== null) return;
 
-    serverProcess.kill("SIGINT");
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      if (serverProcess.exitCode !== null) return;
-      await wait(100);
-    }
-
-    serverProcess.kill("SIGKILL");
-  } finally {
-    await runtimeCleanup?.();
-    runtimeCleanup = undefined;
-    runtime = undefined;
+  serverProcess.kill("SIGINT");
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (serverProcess.exitCode !== null) return;
+    await wait(100);
   }
-}
 
-// ─── opx CLI helpers ──────────────────────────────────────────────────────────
-// Uses `opx` (from opencode-manager) instead of the former `opx-session` binary.
+  serverProcess.kill("SIGKILL");
+}
 
 function runOpxCommand(args: string[]) {
   const result = spawnSync(
     "uvx",
     ["--from", MANAGER_PACKAGE, "ocm", ...args],
     {
-      cwd: runtime?.cwd ?? TOOL_DIR,
+      cwd: TOOL_DIR,
       env: {
-        ...(runtime?.env ?? process.env),
-        OPENCODE_BASE_URL: runtime?.baseUrl ?? baseUrl,
+        ...process.env,
+        OPENCODE_BASE_URL: baseUrl,
       },
       encoding: "utf8",
       timeout: SESSION_TIMEOUT_MS,
@@ -226,16 +138,12 @@ function runOpxCommand(args: string[]) {
   const stderr = result.stderr ?? "";
   if (result.status !== 0) {
     throw new Error(
-      `opx command failed: opx ${args.join(" ")}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+      `ocm command failed: ocm ${args.join(" ")}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
     );
   }
   return { stdout, stderr };
 }
 
-/**
- * Creates a session and injects the initial prompt without waiting for a reply.
- * Returns the session ID.
- */
 function beginSession(prompt: string): string {
   const { stdout } = runOpxCommand([
     "begin-session",
@@ -253,7 +161,6 @@ function chatSession(sessionID: string, prompt: string) {
     "chat",
     sessionID,
     prompt,
-    "--no-reply",
   ]);
 }
 
@@ -311,9 +218,15 @@ async function waitForCompletedToolUse(
     await wait(1_000);
   }
 
-  const steps = readTranscriptSteps(sessionID);
+  let rawTranscript = "(unavailable)";
+  try {
+    const { stdout } = runOpxCommand(["transcript", sessionID, "--json"]);
+    rawTranscript = stdout;
+  } catch (e) {
+    rawTranscript = String(e);
+  }
   throw new Error(
-    `Timed out waiting for completed tool use "${toolName}".\n${JSON.stringify(steps, null, 2)}`,
+    `Timed out waiting for completed tool use "${toolName}".\nRAW TRANSCRIPT:\n${rawTranscript}`,
   );
 }
 
@@ -332,12 +245,7 @@ describe("improved-todowrite live e2e", () => {
 
     try {
       sessionID = beginSession(
-        `Protocol: call \`todo_plan\` exactly once with \`todos\` set to a list containing exactly one item: ` +
-          `content="${nonce}", priority="high". ` +
-          `Then call \`todo_read\` exactly once. ` +
-          `Do not call any other tool. Do not use bash, shell, task, skills, CLI commands, file tools, or builtin todo tools. ` +
-          `If either exact tool call is unavailable or impossible, stop immediately and reply with ONLY FAIL:PROOF_NOT_POSSIBLE. ` +
-          `After both exact tool calls finish successfully, reply with ONLY READY.`,
+        `Call todo_plan with todos=[{content:"${nonce}",priority:"high"}]. Reply READY when done.`,
       );
 
       const planTool = await waitForCompletedToolUse(sessionID, "todo_plan");
