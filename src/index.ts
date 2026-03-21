@@ -6,7 +6,7 @@ const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 60_000;
 const CLI_SPEC =
   process.env.TODOWRITE_CLI_SPEC ??
-  'file:///home/dzack/opencode-plugins/clis/todowrite';
+  'git+https://github.com/dzackgarza/todowrite-manager.git';
 
 async function runTodowrite(
   sessionID: string,
