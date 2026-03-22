@@ -26,10 +26,6 @@ let todowriteBinaryPath: string | undefined;
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
-type TranscriptTurn = {
-  userPrompt: string;
-};
-
 type RawSessionMessage = {
   info?: {
     role?: string;
@@ -38,10 +34,6 @@ type RawSessionMessage = {
     type?: string;
     text?: string;
   } | null>;
-};
-
-type TranscriptData = {
-  turns: TranscriptTurn[];
 };
 
 afterAll(() => {
@@ -161,11 +153,6 @@ function createIdleProofSession(): string {
   return sessionID;
 }
 
-function readTranscript(sessionID: string): TranscriptData {
-  const { stdout } = runOcm(["transcript", sessionID, "--json"]);
-  return JSON.parse(stdout) as TranscriptData;
-}
-
 async function readRawSessionMessages(sessionID: string): Promise<RawSessionMessage[]> {
   const response = await fetch(`${BASE_URL}/session/${sessionID}/message`);
   if (!response.ok) {
@@ -207,20 +194,21 @@ async function waitForAssistantText(
   throw new Error(`Timed out waiting for matching assistant text in session ${sessionID}.`);
 }
 
-async function waitForPublishedPrompt(
+async function waitForPublishedMessageText(
   sessionID: string,
   predicate: (text: string) => boolean,
   timeoutMs: number,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const match = readTranscript(sessionID).turns
-      .map((turn) => turn.userPrompt?.trim() ?? "")
+    const match = (await readRawSessionMessages(sessionID))
+      .filter((message) => message.info?.role === "user")
+      .map(flattenMessageText)
       .find((text) => text.length > 0 && predicate(text));
     if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`Timed out waiting for published todo tree prompt in session ${sessionID}.`);
+  throw new Error(`Timed out waiting for published todo tree message in session ${sessionID}.`);
 }
 
 type TodowriteResult = {
@@ -252,7 +240,7 @@ describe("improved-todowrite live e2e", () => {
         sessionID,
         `Call todo_plan exactly once with todos=[{content:\"${initialContent}\",priority:\"high\",children:[]}]. Reply with ONLY READY.`,
       ]);
-      const planPrompt = await waitForPublishedPrompt(
+      const planPrompt = await waitForPublishedMessageText(
         sessionID,
         (text) =>
           text.includes("# Todo Tree") &&
@@ -284,7 +272,7 @@ describe("improved-todowrite live e2e", () => {
         sessionID,
         `Call todo_edit exactly once with ops=[{type:\"update\",id:\"${id}\",content:\"${editedContent}\"}]. Reply with ONLY READY.`,
       ]);
-      const editPrompt = await waitForPublishedPrompt(
+      const editPrompt = await waitForPublishedMessageText(
         sessionID,
         (text) =>
           text.includes("# Todo Tree") &&
@@ -315,7 +303,7 @@ describe("improved-todowrite live e2e", () => {
         sessionID,
         `Call todo_advance exactly once with id:\"${id}\" and action:\"complete\". Reply with ONLY READY.`,
       ]);
-      const advancePrompt = await waitForPublishedPrompt(
+      const advancePrompt = await waitForPublishedMessageText(
         sessionID,
         (text) =>
           text.includes(editedContent) &&
