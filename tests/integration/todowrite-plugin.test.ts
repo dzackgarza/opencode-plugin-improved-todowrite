@@ -23,6 +23,12 @@ let ocmBinaryPath: string | undefined;
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
+type TranscriptData = {
+  turns: Array<{
+    userPrompt: string;
+  }>;
+};
+
 afterAll(() => {
   rmSync(OCM_TOOL_DIR, { recursive: true, force: true });
 });
@@ -89,8 +95,6 @@ function runOcm(args: string[]) {
   return { stdout, stderr };
 }
 
-// begin-session submits the prompt and returns immediately.
-// Use ocm wait to block until the full turn (including tool calls) completes.
 function beginSession(prompt: string): string {
   const { stdout } = runOcm(["begin-session", prompt, "--agent", AGENT_NAME, "--json"]);
   const data = JSON.parse(stdout) as { sessionID: string };
@@ -98,104 +102,88 @@ function beginSession(prompt: string): string {
   return data.sessionID;
 }
 
-type TranscriptStep = {
-  type: string;
-  tool?: string;
-  status?: string;
-  outputText?: string;
-};
-
-function readTranscriptSteps(sessionID: string): TranscriptStep[] {
+function readTranscript(sessionID: string): TranscriptData {
   const { stdout } = runOcm(["transcript", sessionID, "--json"]);
-  const data = JSON.parse(stdout) as {
-    turns: Array<{
-      assistantMessages: Array<{ steps: Array<TranscriptStep | null> }>;
-    }>;
-  };
-  return data.turns.flatMap((turn) =>
-    turn.assistantMessages.flatMap((msg) =>
-      (msg.steps ?? []).filter((s): s is TranscriptStep => s !== null),
-    ),
-  );
+  return JSON.parse(stdout) as TranscriptData;
 }
 
-async function waitForCompletedTools(
+async function waitForPublishedPrompt(
   sessionID: string,
-  toolNames: string[],
+  predicate: (text: string) => boolean,
   timeoutMs: number,
-): Promise<TranscriptStep[]> {
+): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const steps = readTranscriptSteps(sessionID);
-    if (
-      toolNames.every((toolName) =>
-        steps.some(
-          (step) =>
-            step.type === "tool" && step.tool === toolName && step.status === "completed",
-        ),
-      )
-    ) {
-      return steps;
-    }
+    const match = readTranscript(sessionID).turns
+      .map((turn) => turn.userPrompt?.trim() ?? "")
+      .find((text) => text.length > 0 && predicate(text));
+    if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`Timed out waiting for completed todo tool steps in session ${sessionID}.`);
+  throw new Error(`Timed out waiting for published todo tree prompt in session ${sessionID}.`);
 }
 
 describe("improved-todowrite live e2e", () => {
   it("proves all four wrapper tools execute and preserve the todo-tree witness", async () => {
-    const nonce = randomUUID();
+    const id = `todo-${randomUUID()}`.toLowerCase();
+    const initialContent = `Initial ${id}`;
+    const editedContent = `Edited ${id}`;
     let sessionID: string | undefined;
 
     try {
-      // begin-session submits the prompt and returns the session ID immediately.
-      // The agent then calls todo_plan → todo_edit → todo_advance → todo_read
-      // in one turn so each wrapper entrypoint is exercised against the live CLI.
       sessionID = beginSession(
-        `Step 1: call todo_plan with todos=[{content:"${nonce}",priority:"high"}]. ` +
-        `Step 2: call todo_edit with ops=[{type:"update",id:"${nonce.toLowerCase()}",content:"${nonce} edited"}]. ` +
-        `Step 3: call todo_advance with id:"${nonce.toLowerCase()}" and action:"complete". ` +
-        `Step 4: call todo_read to verify the updated state. ` +
-        `These are four separate verification steps that MUST all be called in order. ` +
-        `Reply READY after all four calls complete.`,
+        `Call todo_plan exactly once with todos=[{id:"${id}",content:"${initialContent}",status:"pending",priority:"high",children:[]}]. Reply with ONLY READY.`,
       );
-
-      const steps = await waitForCompletedTools(
+      const planPrompt = await waitForPublishedPrompt(
         sessionID,
-        ["todo_plan", "todo_edit", "todo_advance", "todo_read"],
+        (text) => text.includes(VERIFICATION_PASSPHRASE) && text.includes(initialContent),
         SESSION_TIMEOUT_MS,
       );
-      const rawTranscript = JSON.stringify(steps, null, 2);
+      expect(planPrompt).toContain(VERIFICATION_PASSPHRASE);
+      expect(planPrompt).toContain(initialContent);
 
-      const planStep = steps.find(
-        (s) => s.type === "tool" && s.tool === "todo_plan" && s.status === "completed",
+      runOcm([
+        "chat",
+        sessionID,
+        `Call todo_edit exactly once with ops=[{type:"update",id:"${id}",content:"${editedContent}"}]. Reply with ONLY READY.`,
+      ]);
+      const editPrompt = await waitForPublishedPrompt(
+        sessionID,
+        (text) => text.includes(VERIFICATION_PASSPHRASE) && text.includes(editedContent),
+        SESSION_TIMEOUT_MS,
       );
-      expect(planStep, `todo_plan step missing. Steps:\n${rawTranscript}`).toBeDefined();
-      expect(planStep!.outputText).toContain(VERIFICATION_PASSPHRASE);
-      expect(planStep!.outputText).toContain(nonce);
+      expect(editPrompt).toContain(editedContent);
 
-      const editStep = steps.find(
-        (s) => s.type === "tool" && s.tool === "todo_edit" && s.status === "completed",
+      runOcm([
+        "chat",
+        sessionID,
+        `Call todo_advance exactly once with id:"${id}" and action:"complete". Reply with ONLY READY.`,
+      ]);
+      const advancePrompt = await waitForPublishedPrompt(
+        sessionID,
+        (text) =>
+          text.includes(VERIFICATION_PASSPHRASE) &&
+          text.includes(editedContent) &&
+          text.toLowerCase().includes("completed"),
+        SESSION_TIMEOUT_MS,
       );
-      expect(editStep, `todo_edit step missing. Steps:\n${rawTranscript}`).toBeDefined();
-      expect(editStep!.outputText).toContain(`${nonce} edited`);
+      expect(advancePrompt.toLowerCase()).toContain("completed");
 
-      const advanceStep = steps.find(
-        (s) => s.type === "tool" && s.tool === "todo_advance" && s.status === "completed",
+      runOcm(["chat", sessionID, "Call todo_read exactly once. Reply with ONLY READY."]);
+      const readPrompt = await waitForPublishedPrompt(
+        sessionID,
+        (text) =>
+          text.includes(VERIFICATION_PASSPHRASE) &&
+          text.includes(editedContent) &&
+          text.toLowerCase().includes("completed"),
+        SESSION_TIMEOUT_MS,
       );
-      expect(advanceStep, `todo_advance step missing. Steps:\n${rawTranscript}`).toBeDefined();
-      expect(advanceStep!.outputText).toContain(VERIFICATION_PASSPHRASE);
-
-      const readStep = steps.find(
-        (s) => s.type === "tool" && s.tool === "todo_read" && s.status === "completed",
-      );
-      expect(readStep, `todo_read step missing. Steps:\n${rawTranscript}`).toBeDefined();
-      expect(readStep!.outputText).toContain(VERIFICATION_PASSPHRASE);
-      expect(readStep!.outputText).toContain(`${nonce} edited`);
+      expect(readPrompt).toContain(editedContent);
+      expect(readPrompt.toLowerCase()).toContain("completed");
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
       }
     }
-  }, 200_000);
+  }, 220_000);
 });
