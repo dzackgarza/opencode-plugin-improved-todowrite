@@ -22,9 +22,11 @@ const AGENT_NAME = "plugin-proof";
 const PROJECT_DIR = process.cwd();
 const CLI_TOOL_DIR = mkdtempSync(join(tmpdir(), "todowrite-proof-cli-"));
 const REAL_TOOL_CALL_RULE =
-  "Use the real OpenCode tool-call mechanism. Plain text like functions.todo_read does not count.";
+  "Use the real OpenCode tool-call mechanism. Plain text, JSON, or YAML that only describes a tool call does not count. Failure examples include functions.todo_read, EXECUTING functions.todo_edit ..., or recipient_name/functions.todo_* parameter blocks.";
 const REAL_TOOL_CALL_READ_RULE =
   "Do not output code fences, pseudocode, or await functions.todo_read(...). Invoke the real todo_read tool with empty arguments instead.";
+const PSEUDO_TOOL_CALL_PATTERN =
+  /functions\.todo_(?:plan|read|advance|edit)|"recipient_name"\s*:\s*"functions\.todo_|"tool"\s*:\s*"functions\.todo_/;
 let ocmBinaryPath: string | undefined;
 let todowriteBinaryPath: string | undefined;
 
@@ -344,6 +346,15 @@ function formatRecentSessionMessages(messages: RawSessionMessage[]): string {
     .join("\n");
 }
 
+function findPseudoToolCallText(messages: RawSessionMessage[]): string | null {
+  return (
+    messages
+      .filter((message) => message.info?.role === "assistant")
+      .map(flattenMessageText)
+      .find((text) => text.length > 0 && PSEUDO_TOOL_CALL_PATTERN.test(text)) ?? null
+  );
+}
+
 async function waitForPublishedMessageText(
   sessionID: string,
   predicate: (text: string) => boolean,
@@ -353,6 +364,13 @@ async function waitForPublishedMessageText(
   let recentMessages: RawSessionMessage[] = [];
   while (Date.now() < deadline) {
     recentMessages = await readRawSessionMessages(sessionID);
+    const pseudoToolCall = findPseudoToolCallText(recentMessages);
+    if (pseudoToolCall) {
+      throw new Error(
+        `Assistant emitted a faux tool call instead of a real OpenCode tool invocation in session ${sessionID}.\n` +
+          `Assistant text:\n${pseudoToolCall}\nRecent messages:\n${formatRecentSessionMessages(recentMessages)}`,
+      );
+    }
     const match = recentMessages
       .filter((message) => message.info?.role !== "assistant")
       .map(flattenMessageText)
