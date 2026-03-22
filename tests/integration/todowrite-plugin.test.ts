@@ -21,6 +21,8 @@ const TODO_READ_WITNESS_TIMEOUT_MS = 90_000;
 const AGENT_NAME = "plugin-proof";
 const PROJECT_DIR = process.cwd();
 const CLI_TOOL_DIR = mkdtempSync(join(tmpdir(), "todowrite-proof-cli-"));
+const REAL_TOOL_CALL_RULE =
+  "Use the real OpenCode tool-call mechanism. Plain text like functions.todo_read does not count.";
 let ocmBinaryPath: string | undefined;
 let todowriteBinaryPath: string | undefined;
 
@@ -388,7 +390,7 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_plan exactly once with todos=[{content:\"${initialContent}\",priority:\"high\",children:[]}]. Reply with ONLY READY.`,
+        `Call todo_plan exactly once with todos=[{content:\"${initialContent}\",priority:\"high\",children:[]}]. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
       ]);
       const planPrompt = await waitForPublishedMessageText(
         sessionID,
@@ -420,7 +422,7 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_edit exactly once with ops=[{type:"update",id:"${id}",content:"${editedContent}"}]. Reply with ONLY READY.`,
+        `Call todo_edit exactly once with ops=[{type:"update",id:"${id}",content:"${editedContent}"}]. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
       ]);
       const editPrompt = await waitForPublishedMessageText(
         sessionID,
@@ -451,7 +453,7 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_advance exactly once with id:\"${id}\" and action:\"complete\". Reply with ONLY READY.`,
+        `Call todo_advance exactly once with id:\"${id}\" and action:\"complete\". ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
       ]);
       const advancePrompt = await waitForPublishedMessageText(
         sessionID,
@@ -479,7 +481,7 @@ describe("improved-todowrite live e2e", () => {
       const readArgs = [
         "chat",
         sessionID,
-        "Call todo_read exactly once with empty arguments {}. Reply with ONLY READY.",
+        `Call todo_read exactly once with empty arguments {}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
       ];
       const readProcess = startOcm(readArgs);
       let readPrompt: string;

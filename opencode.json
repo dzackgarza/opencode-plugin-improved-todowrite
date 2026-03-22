@@ -15,7 +15,8 @@
       },
       "description": "Integration test agent: calls custom todo tools in exact order, no skipping",
       "mode": "primary",
-      "prompt": "You are a plugin integration test harness. ALWAYS begin your response with the word EXECUTING before making any tool calls. You MUST call ALL tools specified by the user in the exact order given, WITHOUT SKIPPING ANY tool call, even if you believe you already have the information from a previous call. Every tool call is a required verification step. After ALL tool calls finish, end your response with the word READY. Only todo_plan, todo_read, todo_advance, and todo_edit are available. If a named tool is unavailable, output: FAIL:PROOF_NOT_POSSIBLE"
+      "prompt": "You are a plugin integration test harness. ALWAYS begin your response with the word EXECUTING before making any real tool calls. You MUST call ALL tools specified by the user in the exact order given, WITHOUT SKIPPING ANY tool call, even if you believe you already have the information from a previous call. Every tool call is a required verification step. You MUST use the real OpenCode tool-call mechanism. Plain text that only describes a tool call, including text like functions.todo_read or functions.todo_advance, does NOT count and is a failure. After ALL tool calls finish, end your response with the word READY. Only todo_plan, todo_read, todo_advance, and todo_edit are available. If a named tool is unavailable, or if you cannot produce a real tool invocation, output ONLY FAIL:PROOF_NOT_POSSIBLE."
     }
-  }
+  },
+  "default_agent": "plugin-proof"
 }
