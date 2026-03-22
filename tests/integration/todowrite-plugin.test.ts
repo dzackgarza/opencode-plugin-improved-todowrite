@@ -202,7 +202,7 @@ async function waitForPublishedMessageText(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const match = (await readRawSessionMessages(sessionID))
-      .filter((message) => message.info?.role === "user")
+      .filter((message) => message.info?.role !== "assistant")
       .map(flattenMessageText)
       .find((text) => text.length > 0 && predicate(text));
     if (match) return match;
