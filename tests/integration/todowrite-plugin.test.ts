@@ -12,34 +12,40 @@ if (!BASE_URL) {
   throw new Error("OPENCODE_BASE_URL must be set (run against a repo-local or CI OpenCode server)");
 }
 
-const MANAGER_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git";
+const OCM_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git";
+const TODOWRITE_PACKAGE =
+  process.env.TODOWRITE_CLI_SPEC?.trim() || "git+https://github.com/dzackgarza/todowrite-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SESSION_TIMEOUT_MS = 240_000;
 const AGENT_NAME = "plugin-proof";
 const PROJECT_DIR = process.cwd();
-const OCM_TOOL_DIR = mkdtempSync(join(tmpdir(), "ocm-tool-"));
+const CLI_TOOL_DIR = mkdtempSync(join(tmpdir(), "todowrite-proof-cli-"));
 let ocmBinaryPath: string | undefined;
+let todowriteBinaryPath: string | undefined;
 
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
+type TranscriptTurn = {
+  userPrompt: string;
+};
+
 type TranscriptData = {
-  turns: Array<{
-    userPrompt: string;
-  }>;
+  turns: TranscriptTurn[];
 };
 
 afterAll(() => {
-  rmSync(OCM_TOOL_DIR, { recursive: true, force: true });
+  rmSync(CLI_TOOL_DIR, { recursive: true, force: true });
 });
 
-function getOcmBinaryPath(): string {
-  if (ocmBinaryPath) return ocmBinaryPath;
-  const binDir = process.platform === "win32" ? join(OCM_TOOL_DIR, "Scripts") : join(OCM_TOOL_DIR, "bin");
-  const candidate = join(binDir, process.platform === "win32" ? "ocm.exe" : "ocm");
+function ensureCliBinaries(): void {
+  if (ocmBinaryPath && todowriteBinaryPath) return;
+  const binDir = process.platform === "win32" ? join(CLI_TOOL_DIR, "Scripts") : join(CLI_TOOL_DIR, "bin");
+  const candidateOcm = join(binDir, process.platform === "win32" ? "ocm.exe" : "ocm");
+  const candidateTodowrite = join(binDir, process.platform === "win32" ? "todowrite.exe" : "todowrite");
   const pythonBinary = join(binDir, process.platform === "win32" ? "python.exe" : "python");
-  if (!existsSync(candidate)) {
-    const createVenv = spawnSync("uv", ["venv", OCM_TOOL_DIR], {
+  if (!existsSync(candidateOcm) || !existsSync(candidateTodowrite)) {
+    const createVenv = spawnSync("uv", ["venv", CLI_TOOL_DIR], {
       env: process.env,
       cwd: PROJECT_DIR,
       encoding: "utf8",
@@ -49,12 +55,12 @@ function getOcmBinaryPath(): string {
     if (createVenv.error) throw createVenv.error;
     if (createVenv.status !== 0) {
       throw new Error(
-        `Failed to create ocm venv\nSTDOUT:\n${createVenv.stdout ?? ""}\nSTDERR:\n${createVenv.stderr ?? ""}`,
+        `Failed to create proof CLI venv\nSTDOUT:\n${createVenv.stdout ?? ""}\nSTDERR:\n${createVenv.stderr ?? ""}`,
       );
     }
     const install = spawnSync(
       "uv",
-      ["pip", "install", "--python", pythonBinary, MANAGER_PACKAGE],
+      ["pip", "install", "--python", pythonBinary, OCM_PACKAGE, TODOWRITE_PACKAGE],
       {
         env: process.env,
         cwd: PROJECT_DIR,
@@ -64,14 +70,26 @@ function getOcmBinaryPath(): string {
       },
     );
     if (install.error) throw install.error;
-    if (install.status !== 0 || !existsSync(candidate)) {
+    if (install.status !== 0 || !existsSync(candidateOcm) || !existsSync(candidateTodowrite)) {
       throw new Error(
-        `Failed to install ocm\nSTDOUT:\n${install.stdout ?? ""}\nSTDERR:\n${install.stderr ?? ""}`,
+        `Failed to install proof CLIs\nSTDOUT:\n${install.stdout ?? ""}\nSTDERR:\n${install.stderr ?? ""}`,
       );
     }
   }
-  ocmBinaryPath = candidate;
-  return candidate;
+  ocmBinaryPath = candidateOcm;
+  todowriteBinaryPath = candidateTodowrite;
+}
+
+function getOcmBinaryPath(): string {
+  ensureCliBinaries();
+  if (!ocmBinaryPath) throw new Error("ocm binary was not installed");
+  return ocmBinaryPath;
+}
+
+function getTodowriteBinaryPath(): string {
+  ensureCliBinaries();
+  if (!todowriteBinaryPath) throw new Error("todowrite binary was not installed");
+  return todowriteBinaryPath;
 }
 
 function runOcm(args: string[]) {
@@ -95,11 +113,42 @@ function runOcm(args: string[]) {
   return { stdout, stderr };
 }
 
+function runTodowriteJson(sessionID: string, toolName: string, payload: Record<string, unknown>) {
+  const result = spawnSync(
+    getTodowriteBinaryPath(),
+    ["run-json", toolName, sessionID, JSON.stringify(payload)],
+    {
+      env: process.env,
+      cwd: PROJECT_DIR,
+      encoding: "utf8",
+      timeout: SESSION_TIMEOUT_MS,
+      maxBuffer: MAX_BUFFER,
+    },
+  );
+  if (result.error) throw result.error;
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  if (result.status !== 0) {
+    throw new Error(`todowrite run-json ${toolName} failed\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
+  }
+  return JSON.parse(stdout) as { markdown?: string };
+}
+
 function beginSession(prompt: string): string {
   const { stdout } = runOcm(["begin-session", prompt, "--agent", AGENT_NAME, "--json"]);
   const data = JSON.parse(stdout) as { sessionID: string };
   if (!data.sessionID) throw new Error(`begin-session returned no sessionID: ${stdout}`);
   return data.sessionID;
+}
+
+function waitIdle(sessionID: string): void {
+  runOcm(["wait", sessionID, "--timeout-sec=180"]);
+}
+
+function createIdleProofSession(): string {
+  const sessionID = beginSession("Reply with ONLY READY.");
+  waitIdle(sessionID);
+  return sessionID;
 }
 
 function readTranscript(sessionID: string): TranscriptData {
@@ -123,41 +172,91 @@ async function waitForPublishedPrompt(
   throw new Error(`Timed out waiting for published todo tree prompt in session ${sessionID}.`);
 }
 
+function seedTodoTree(sessionID: string, input: { id: string; content: string; status: string }): void {
+  runTodowriteJson(sessionID, "todo-plan", {
+    todos: [
+      {
+        id: input.id,
+        content: input.content,
+        status: input.status,
+        priority: "high",
+        children: [],
+      },
+    ],
+  });
+}
+
 describe("improved-todowrite live e2e", () => {
-  it("proves all four wrapper tools execute and preserve the todo-tree witness", async () => {
+  it("proves todo_plan publishes the initial todo tree witness", async () => {
+    const id = `todo-${randomUUID()}`.toLowerCase();
+    const initialContent = `Initial ${id}`;
+    let sessionID: string | undefined;
+
+    try {
+      sessionID = createIdleProofSession();
+      runOcm([
+        "chat",
+        sessionID,
+        `Call todo_plan exactly once with todos=[{id:\"${id}\",content:\"${initialContent}\",status:\"pending\",priority:\"high\",children:[]}]. Reply with ONLY READY.`,
+      ]);
+      const planPrompt = await waitForPublishedPrompt(
+        sessionID,
+        (text) =>
+          text.includes(VERIFICATION_PASSPHRASE) &&
+          text.includes(initialContent) &&
+          text.toLowerCase().includes("pending"),
+        SESSION_TIMEOUT_MS,
+      );
+      expect(planPrompt).toContain(VERIFICATION_PASSPHRASE);
+      expect(planPrompt).toContain(initialContent);
+      expect(planPrompt.toLowerCase()).toContain("pending");
+    } finally {
+      if (sessionID) {
+        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+      }
+    }
+  }, SESSION_TIMEOUT_MS);
+
+  it("proves todo_edit publishes updated content", async () => {
     const id = `todo-${randomUUID()}`.toLowerCase();
     const initialContent = `Initial ${id}`;
     const editedContent = `Edited ${id}`;
     let sessionID: string | undefined;
 
     try {
-      sessionID = beginSession(
-        `Call todo_plan exactly once with todos=[{id:"${id}",content:"${initialContent}",status:"pending",priority:"high",children:[]}]. Reply with ONLY READY.`,
-      );
-      const planPrompt = await waitForPublishedPrompt(
-        sessionID,
-        (text) => text.includes(VERIFICATION_PASSPHRASE) && text.includes(initialContent),
-        SESSION_TIMEOUT_MS,
-      );
-      expect(planPrompt).toContain(VERIFICATION_PASSPHRASE);
-      expect(planPrompt).toContain(initialContent);
-
+      sessionID = createIdleProofSession();
+      seedTodoTree(sessionID, { id, content: initialContent, status: "pending" });
       runOcm([
         "chat",
         sessionID,
-        `Call todo_edit exactly once with ops=[{type:"update",id:"${id}",content:"${editedContent}"}]. Reply with ONLY READY.`,
+        `Call todo_edit exactly once with ops=[{type:\"update\",id:\"${id}\",content:\"${editedContent}\"}]. Reply with ONLY READY.`,
       ]);
       const editPrompt = await waitForPublishedPrompt(
         sessionID,
         (text) => text.includes(VERIFICATION_PASSPHRASE) && text.includes(editedContent),
         SESSION_TIMEOUT_MS,
       );
+      expect(editPrompt).toContain(VERIFICATION_PASSPHRASE);
       expect(editPrompt).toContain(editedContent);
+    } finally {
+      if (sessionID) {
+        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+      }
+    }
+  }, SESSION_TIMEOUT_MS);
 
+  it("proves todo_advance publishes completed status", async () => {
+    const id = `todo-${randomUUID()}`.toLowerCase();
+    const editedContent = `Edited ${id}`;
+    let sessionID: string | undefined;
+
+    try {
+      sessionID = createIdleProofSession();
+      seedTodoTree(sessionID, { id, content: editedContent, status: "pending" });
       runOcm([
         "chat",
         sessionID,
-        `Call todo_advance exactly once with id:"${id}" and action:"complete". Reply with ONLY READY.`,
+        `Call todo_advance exactly once with id:\"${id}\" and action:\"complete\". Reply with ONLY READY.`,
       ]);
       const advancePrompt = await waitForPublishedPrompt(
         sessionID,
@@ -167,8 +266,24 @@ describe("improved-todowrite live e2e", () => {
           text.toLowerCase().includes("completed"),
         SESSION_TIMEOUT_MS,
       );
+      expect(advancePrompt).toContain(VERIFICATION_PASSPHRASE);
+      expect(advancePrompt).toContain(editedContent);
       expect(advancePrompt.toLowerCase()).toContain("completed");
+    } finally {
+      if (sessionID) {
+        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+      }
+    }
+  }, SESSION_TIMEOUT_MS);
 
+  it("proves todo_read publishes the current todo tree", async () => {
+    const id = `todo-${randomUUID()}`.toLowerCase();
+    const editedContent = `Edited ${id}`;
+    let sessionID: string | undefined;
+
+    try {
+      sessionID = createIdleProofSession();
+      seedTodoTree(sessionID, { id, content: editedContent, status: "completed" });
       runOcm(["chat", sessionID, "Call todo_read exactly once. Reply with ONLY READY."]);
       const readPrompt = await waitForPublishedPrompt(
         sessionID,
@@ -178,6 +293,7 @@ describe("improved-todowrite live e2e", () => {
           text.toLowerCase().includes("completed"),
         SESSION_TIMEOUT_MS,
       );
+      expect(readPrompt).toContain(VERIFICATION_PASSPHRASE);
       expect(readPrompt).toContain(editedContent);
       expect(readPrompt.toLowerCase()).toContain("completed");
     } finally {
@@ -185,5 +301,5 @@ describe("improved-todowrite live e2e", () => {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
       }
     }
-  }, 220_000);
+  }, SESSION_TIMEOUT_MS);
 });
