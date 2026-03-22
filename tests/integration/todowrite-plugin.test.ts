@@ -1,6 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // OpenCode must already be running before this file executes.
 // `just test` runs the suite, but it does not start or stop the server.
@@ -14,14 +17,47 @@ const MAX_BUFFER = 8 * 1024 * 1024;
 const SESSION_TIMEOUT_MS = 240_000;
 const AGENT_NAME = "plugin-proof";
 const PROJECT_DIR = process.cwd();
+const OCM_TOOL_DIR = mkdtempSync(join(tmpdir(), "ocm-tool-"));
+let ocmBinaryPath: string | undefined;
 
 const VERIFICATION_PASSPHRASE = process.env.IMPROVED_TODOWRITE_TEST_PASSPHRASE?.trim();
 if (!VERIFICATION_PASSPHRASE) throw new Error("IMPROVED_TODOWRITE_TEST_PASSPHRASE must be set");
 
+afterAll(() => {
+  rmSync(OCM_TOOL_DIR, { recursive: true, force: true });
+});
+
+function getOcmBinaryPath(): string {
+  if (ocmBinaryPath) return ocmBinaryPath;
+  const binDir = process.platform === "win32" ? join(OCM_TOOL_DIR, "Scripts") : join(OCM_TOOL_DIR, "bin");
+  const candidate = join(binDir, process.platform === "win32" ? "ocm.exe" : "ocm");
+  if (!existsSync(candidate)) {
+    const install = spawnSync(
+      "uv",
+      ["tool", "install", "--tool-dir", OCM_TOOL_DIR, "--from", MANAGER_PACKAGE, "ocm"],
+      {
+        env: process.env,
+        cwd: PROJECT_DIR,
+        encoding: "utf8",
+        timeout: SESSION_TIMEOUT_MS,
+        maxBuffer: MAX_BUFFER,
+      },
+    );
+    if (install.error) throw install.error;
+    if (install.status !== 0 || !existsSync(candidate)) {
+      throw new Error(
+        `Failed to install ocm\nSTDOUT:\n${install.stdout ?? ""}\nSTDERR:\n${install.stderr ?? ""}`,
+      );
+    }
+  }
+  ocmBinaryPath = candidate;
+  return candidate;
+}
+
 function runOcm(args: string[]) {
   const result = spawnSync(
-    "uvx",
-    ["--from", MANAGER_PACKAGE, "ocm", ...args],
+    getOcmBinaryPath(),
+    args,
     {
       env: { ...process.env, OPENCODE_BASE_URL: BASE_URL },
       cwd: PROJECT_DIR,
@@ -48,10 +84,6 @@ function beginSession(prompt: string): string {
   return data.sessionID;
 }
 
-function waitIdle(sessionID: string) {
-  runOcm(["wait", sessionID, "--timeout-sec=180"]);
-}
-
 type TranscriptStep = {
   type: string;
   tool?: string;
@@ -73,8 +105,31 @@ function readTranscriptSteps(sessionID: string): TranscriptStep[] {
   );
 }
 
+async function waitForCompletedTools(
+  sessionID: string,
+  toolNames: string[],
+  timeoutMs: number,
+): Promise<TranscriptStep[]> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const steps = readTranscriptSteps(sessionID);
+    if (
+      toolNames.every((toolName) =>
+        steps.some(
+          (step) =>
+            step.type === "tool" && step.tool === toolName && step.status === "completed",
+        ),
+      )
+    ) {
+      return steps;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting for completed todo tool steps in session ${sessionID}.`);
+}
+
 describe("improved-todowrite live e2e", () => {
-  it("proves all four wrapper tools execute and preserve the todo-tree witness", () => {
+  it("proves all four wrapper tools execute and preserve the todo-tree witness", async () => {
     const nonce = randomUUID();
     let sessionID: string | undefined;
 
@@ -91,10 +146,11 @@ describe("improved-todowrite live e2e", () => {
         `Reply READY after all four calls complete.`,
       );
 
-      // Block until the full turn is complete (tool calls + final text).
-      waitIdle(sessionID);
-
-      const steps = readTranscriptSteps(sessionID);
+      const steps = await waitForCompletedTools(
+        sessionID,
+        ["todo_plan", "todo_edit", "todo_advance", "todo_read"],
+        SESSION_TIMEOUT_MS,
+      );
       const rawTranscript = JSON.stringify(steps, null, 2);
 
       const planStep = steps.find(
