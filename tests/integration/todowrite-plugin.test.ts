@@ -34,6 +34,12 @@ type RawSessionMessage = {
   parts?: Array<{
     type?: string;
     text?: string;
+    tool?: string;
+    state?: {
+      status?: string;
+      output?: unknown;
+      error?: unknown;
+    };
   } | null>;
 };
 
@@ -280,10 +286,57 @@ function flattenMessageText(message: RawSessionMessage): string {
     .join("\n");
 }
 
+function truncateDiagnosticText(value: string, maxLength = 240): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}...`;
+}
+
+function formatMessageDiagnostics(message: RawSessionMessage): string {
+  return (message.parts ?? [])
+    .filter(
+      (
+        part,
+      ): part is {
+        type?: string;
+        text?: string;
+        tool?: string;
+        state?: { status?: string; output?: unknown; error?: unknown };
+      } => part !== null && typeof part === "object",
+    )
+    .map((part) => {
+      if (part.type === "text" && typeof part.text === "string") {
+        const text = part.text.trim();
+        return text.length > 0 ? text : "";
+      }
+      if (part.type !== "tool") return "";
+      const fragments = [`tool:${part.tool ?? "unknown"}`];
+      if (typeof part.state?.status === "string") {
+        fragments.push(`status=${part.state.status}`);
+      }
+      if (part.state?.output !== undefined) {
+        const output =
+          typeof part.state.output === "string"
+            ? part.state.output
+            : JSON.stringify(part.state.output);
+        if (output) fragments.push(`output=${truncateDiagnosticText(output)}`);
+      }
+      if (part.state?.error !== undefined) {
+        const error =
+          typeof part.state.error === "string"
+            ? part.state.error
+            : JSON.stringify(part.state.error);
+        if (error) fragments.push(`error=${truncateDiagnosticText(error)}`);
+      }
+      return fragments.join(" ");
+    })
+    .filter(Boolean)
+    .join(" | ");
+}
+
 function formatRecentSessionMessages(messages: RawSessionMessage[]): string {
   return messages
     .slice(-12)
-    .map((message) => `${message.info?.role ?? "unknown"} :: ${flattenMessageText(message)}`)
+    .map((message) => `${message.info?.role ?? "unknown"} :: ${formatMessageDiagnostics(message)}`)
     .join("\n");
 }
 
