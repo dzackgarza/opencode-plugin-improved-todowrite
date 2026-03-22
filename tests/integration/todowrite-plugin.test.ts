@@ -22,11 +22,11 @@ const AGENT_NAME = "plugin-proof";
 const PROJECT_DIR = process.cwd();
 const CLI_TOOL_DIR = mkdtempSync(join(tmpdir(), "todowrite-proof-cli-"));
 const REAL_TOOL_CALL_RULE =
-  "Use the real OpenCode tool-call mechanism. Plain text, JSON, or YAML that only describes a tool call does not count. Failure examples include functions.todo_read, EXECUTING functions.todo_edit ..., or recipient_name/functions.todo_* parameter blocks.";
+  "Use the real OpenCode tool-call mechanism and start with the real tool call itself. Do not emit any visible preamble before the tool call. Plain text, JSON, or YAML that only describes a tool call does not count. Failure examples include functions.todo_read, EXECUTING functions.todo_edit ..., or recipient_name/functions.todo_* parameter blocks.";
 const REAL_TOOL_CALL_READ_RULE =
   "Do not output code fences, pseudocode, or await functions.todo_read(...). Invoke the real todo_read tool with empty arguments instead.";
 const PSEUDO_TOOL_CALL_PATTERN =
-  /functions\.todo_(?:plan|read|advance|edit)|"recipient_name"\s*:\s*"functions\.todo_|"tool"\s*:\s*"functions\.todo_/;
+  /(?:^|\n)\s*EXECUTING(?:\s+functions\.todo_|\s*$)|(?:^|\n)\s*functions\.todo_(?:plan|read|advance|edit)\b|"(?:recipient_name|tool)"\s*:\s*"functions\.todo_/m;
 let ocmBinaryPath: string | undefined;
 let todowriteBinaryPath: string | undefined;
 
@@ -410,7 +410,7 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_plan exactly once with todos=[{content:\"${initialContent}\",priority:\"high\",children:[]}]. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
+        `Call todo_plan exactly once with this exact JSON arguments object: {"todos":[{"content":"${initialContent}","priority":"high","children":[]}]}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
       ]);
       const planPrompt = await waitForPublishedMessageText(
         sessionID,
@@ -442,7 +442,7 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_edit exactly once with ops=[{type:"update",id:"${id}",content:"${editedContent}"}]. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
+        `Call todo_edit exactly once with this exact JSON arguments object: {"ops":[{"type":"update","id":"${id}","content":"${editedContent}"}]}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
       ]);
       const editPrompt = await waitForPublishedMessageText(
         sessionID,
@@ -473,7 +473,7 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_advance exactly once with id:\"${id}\" and action:\"complete\". ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
+        `Call todo_advance exactly once with this exact JSON arguments object: {"id":"${id}","action":"complete"}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
       ]);
       const advancePrompt = await waitForPublishedMessageText(
         sessionID,
@@ -501,7 +501,7 @@ describe("improved-todowrite live e2e", () => {
       const readArgs = [
         "chat",
         sessionID,
-        `Call todo_read exactly once with empty arguments {}. ${REAL_TOOL_CALL_RULE} ${REAL_TOOL_CALL_READ_RULE} Reply with ONLY READY.`,
+        `Call todo_read exactly once with this exact JSON arguments object: {}. ${REAL_TOOL_CALL_RULE} ${REAL_TOOL_CALL_READ_RULE} Reply with ONLY READY.`,
       ];
       const readProcess = startOcm(readArgs);
       let readPrompt: string;
