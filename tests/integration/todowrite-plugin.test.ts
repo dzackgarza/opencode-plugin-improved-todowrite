@@ -172,24 +172,26 @@ async function waitForPublishedPrompt(
   throw new Error(`Timed out waiting for published todo tree prompt in session ${sessionID}.`);
 }
 
-function seedTodoTree(sessionID: string, input: { id: string; content: string; status: string }): void {
-  runTodowriteJson(sessionID, "todo-plan", {
+type TodowriteResult = {
+  current?: { id?: string };
+  todos?: Array<{ id?: string }>;
+};
+
+function seedTodoTree(sessionID: string, input: { content: string; priority?: string }): TodowriteResult {
+  return runTodowriteJson(sessionID, "todo-plan", {
     todos: [
       {
-        id: input.id,
         content: input.content,
-        status: input.status,
-        priority: "high",
+        ...(input.priority ? { priority: input.priority } : {}),
         children: [],
       },
     ],
-  });
+  }) as TodowriteResult;
 }
 
 describe("improved-todowrite live e2e", () => {
   it("proves todo_plan publishes the initial todo tree witness", async () => {
-    const id = `todo-${randomUUID()}`.toLowerCase();
-    const initialContent = `Initial ${id}`;
+    const initialContent = `Initial ${randomUUID()}`;
     let sessionID: string | undefined;
 
     try {
@@ -197,19 +199,18 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_plan exactly once with todos=[{id:\"${id}\",content:\"${initialContent}\",status:\"pending\",priority:\"high\",children:[]}]. Reply with ONLY READY.`,
+        `Call todo_plan exactly once with todos=[{content:\"${initialContent}\",priority:\"high\",children:[]}]. Reply with ONLY READY.`,
       ]);
       const planPrompt = await waitForPublishedPrompt(
         sessionID,
         (text) =>
-          text.includes(VERIFICATION_PASSPHRASE) &&
+          text.includes("# Todo Tree") &&
           text.includes(initialContent) &&
-          text.toLowerCase().includes("pending"),
+          text.includes(`- [ ] ${initialContent} <-- current`),
         SESSION_TIMEOUT_MS,
       );
-      expect(planPrompt).toContain(VERIFICATION_PASSPHRASE);
       expect(planPrompt).toContain(initialContent);
-      expect(planPrompt.toLowerCase()).toContain("pending");
+      expect(planPrompt).toContain(`- [ ] ${initialContent} <-- current`);
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
@@ -218,14 +219,15 @@ describe("improved-todowrite live e2e", () => {
   }, SESSION_TIMEOUT_MS);
 
   it("proves todo_edit publishes updated content", async () => {
-    const id = `todo-${randomUUID()}`.toLowerCase();
-    const initialContent = `Initial ${id}`;
-    const editedContent = `Edited ${id}`;
+    const initialContent = `Initial ${randomUUID()}`;
+    const editedContent = `Edited ${randomUUID()}`;
     let sessionID: string | undefined;
 
     try {
       sessionID = createIdleProofSession();
-      seedTodoTree(sessionID, { id, content: initialContent, status: "pending" });
+      const seeded = seedTodoTree(sessionID, { content: initialContent, priority: "high" });
+      const id = seeded.current?.id ?? seeded.todos?.[0]?.id;
+      if (!id) throw new Error("todo-plan did not return a current or top-level todo id");
       runOcm([
         "chat",
         sessionID,
@@ -233,11 +235,14 @@ describe("improved-todowrite live e2e", () => {
       ]);
       const editPrompt = await waitForPublishedPrompt(
         sessionID,
-        (text) => text.includes(VERIFICATION_PASSPHRASE) && text.includes(editedContent),
+        (text) =>
+          text.includes("# Todo Tree") &&
+          text.includes(editedContent) &&
+          text.includes(`- [ ] ${editedContent} <-- current`),
         SESSION_TIMEOUT_MS,
       );
-      expect(editPrompt).toContain(VERIFICATION_PASSPHRASE);
       expect(editPrompt).toContain(editedContent);
+      expect(editPrompt).toContain(`- [ ] ${editedContent} <-- current`);
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
@@ -246,13 +251,14 @@ describe("improved-todowrite live e2e", () => {
   }, SESSION_TIMEOUT_MS);
 
   it("proves todo_advance publishes completed status", async () => {
-    const id = `todo-${randomUUID()}`.toLowerCase();
-    const editedContent = `Edited ${id}`;
+    const editedContent = `Edited ${randomUUID()}`;
     let sessionID: string | undefined;
 
     try {
       sessionID = createIdleProofSession();
-      seedTodoTree(sessionID, { id, content: editedContent, status: "pending" });
+      const seeded = seedTodoTree(sessionID, { content: editedContent, priority: "high" });
+      const id = seeded.current?.id ?? seeded.todos?.[0]?.id;
+      if (!id) throw new Error("todo-plan did not return a current or top-level todo id");
       runOcm([
         "chat",
         sessionID,
@@ -261,14 +267,12 @@ describe("improved-todowrite live e2e", () => {
       const advancePrompt = await waitForPublishedPrompt(
         sessionID,
         (text) =>
-          text.includes(VERIFICATION_PASSPHRASE) &&
           text.includes(editedContent) &&
-          text.toLowerCase().includes("completed"),
+          text.includes(`- [x] ${editedContent}`),
         SESSION_TIMEOUT_MS,
       );
-      expect(advancePrompt).toContain(VERIFICATION_PASSPHRASE);
       expect(advancePrompt).toContain(editedContent);
-      expect(advancePrompt.toLowerCase()).toContain("completed");
+      expect(advancePrompt).toContain(`- [x] ${editedContent}`);
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
@@ -277,25 +281,22 @@ describe("improved-todowrite live e2e", () => {
   }, SESSION_TIMEOUT_MS);
 
   it("proves todo_read publishes the current todo tree", async () => {
-    const id = `todo-${randomUUID()}`.toLowerCase();
-    const editedContent = `Edited ${id}`;
+    const editedContent = `Edited ${randomUUID()}`;
     let sessionID: string | undefined;
 
     try {
       sessionID = createIdleProofSession();
-      seedTodoTree(sessionID, { id, content: editedContent, status: "completed" });
+      seedTodoTree(sessionID, { content: editedContent, priority: "high" });
       runOcm(["chat", sessionID, "Call todo_read exactly once. Reply with ONLY READY."]);
       const readPrompt = await waitForPublishedPrompt(
         sessionID,
         (text) =>
-          text.includes(VERIFICATION_PASSPHRASE) &&
           text.includes(editedContent) &&
-          text.toLowerCase().includes("completed"),
+          text.includes(`- [ ] ${editedContent} <-- current`),
         SESSION_TIMEOUT_MS,
       );
-      expect(readPrompt).toContain(VERIFICATION_PASSPHRASE);
       expect(readPrompt).toContain(editedContent);
-      expect(readPrompt.toLowerCase()).toContain("completed");
+      expect(readPrompt).toContain(`- [ ] ${editedContent} <-- current`);
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
