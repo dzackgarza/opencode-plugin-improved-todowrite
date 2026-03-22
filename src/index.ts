@@ -33,9 +33,9 @@ async function runTodowrite(
 
 export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
   async function publishTodoTree(sessionID: string, result: any) {
-    if (!client.session?.prompt) return;
+    if (!client.session?.promptAsync) return;
 
-    await client.session.prompt({
+    await client.session.promptAsync({
       path: { id: sessionID },
       body: {
         noReply: true,
@@ -43,7 +43,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
       },
     });
 
-    await client.session.prompt({
+    await client.session.promptAsync({
       path: { id: sessionID },
       body: {
         noReply: true,
