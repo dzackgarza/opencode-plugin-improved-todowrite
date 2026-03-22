@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ const TODOWRITE_PACKAGE =
   process.env.TODOWRITE_CLI_SPEC?.trim() || "git+https://github.com/dzackgarza/todowrite-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SESSION_TIMEOUT_MS = 240_000;
+const TODO_READ_WITNESS_TIMEOUT_MS = 90_000;
 const AGENT_NAME = "plugin-proof";
 const PROJECT_DIR = process.cwd();
 const CLI_TOOL_DIR = mkdtempSync(join(tmpdir(), "todowrite-proof-cli-"));
@@ -34,6 +35,14 @@ type RawSessionMessage = {
     type?: string;
     text?: string;
   } | null>;
+};
+
+type RunningOcmProcess = {
+  args: string[];
+  child: ReturnType<typeof spawn>;
+  completion: Promise<number | null>;
+  readStdout: () => string;
+  readStderr: () => string;
 };
 
 afterAll(() => {
@@ -113,6 +122,100 @@ function runOcm(args: string[]) {
     throw new Error(`ocm ${args.join(" ")} failed\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
   }
   return { stdout, stderr };
+}
+
+function startOcm(args: string[]): RunningOcmProcess {
+  const child = spawn(getOcmBinaryPath(), args, {
+    env: { ...process.env, OPENCODE_BASE_URL: BASE_URL },
+    cwd: PROJECT_DIR,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const completion = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code));
+  });
+  return {
+    args,
+    child,
+    completion,
+    readStdout: () => stdout,
+    readStderr: () => stderr,
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForOcmProcess(
+  process: RunningOcmProcess,
+  timeoutMs: number,
+): Promise<{
+  code: number | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+  killedForCleanup: boolean;
+}> {
+  let timedOut = false;
+  const result = await Promise.race([
+    process.completion.then((code) => ({ code, timedOut: false })),
+    sleep(timeoutMs).then(() => {
+      timedOut = true;
+      return { code: process.child.exitCode, timedOut: true };
+    }),
+  ]);
+  return {
+    code: result.code,
+    timedOut: timedOut || result.timedOut,
+    stdout: process.readStdout(),
+    stderr: process.readStderr(),
+    killedForCleanup: false,
+  };
+}
+
+async function stopOcmProcess(
+  process: RunningOcmProcess,
+): Promise<{
+  code: number | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+  killedForCleanup: boolean;
+}> {
+  let result = await waitForOcmProcess(process, 2_000);
+  if (!result.timedOut) return result;
+  process.child.kill("SIGTERM");
+  result = await waitForOcmProcess(process, 1_000);
+  if (!result.timedOut) return { ...result, killedForCleanup: true };
+  process.child.kill("SIGKILL");
+  return { ...(await waitForOcmProcess(process, 1_000)), killedForCleanup: true };
+}
+
+function formatOcmProcessOutcome(
+  args: string[],
+  outcome: {
+    code: number | null;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+    killedForCleanup: boolean;
+  },
+): string {
+  const prefix = outcome.timedOut
+    ? `ocm ${args.join(" ")} did not exit before cleanup`
+    : outcome.killedForCleanup
+      ? `ocm ${args.join(" ")} was terminated during cleanup`
+    : `ocm ${args.join(" ")} exited with code ${outcome.code}`;
+  return `${prefix}\nSTDOUT:\n${outcome.stdout}\nSTDERR:\n${outcome.stderr}`;
 }
 
 function runTodowriteJson(sessionID: string, toolName: string, payload: Record<string, unknown>) {
@@ -320,19 +423,34 @@ describe("improved-todowrite live e2e", () => {
     try {
       sessionID = createIdleProofSession();
       seedTodoTree(sessionID, { content: editedContent, priority: "high" });
-      runOcm([
+      const readArgs = [
         "chat",
         sessionID,
-        "Call todo_read exactly once. Reply with ONLY READY.",
-      ]);
-      const readPrompt = await waitForPublishedMessageText(
-        sessionID,
-        (text) =>
-          text.includes("# Todo Tree") &&
-          text.includes(editedContent) &&
-          text.includes(`- [ ] ${editedContent} <-- current`),
-        SESSION_TIMEOUT_MS,
-      );
+        "Call todo_read exactly once with empty arguments {}. Reply with ONLY READY.",
+      ];
+      const readProcess = startOcm(readArgs);
+      let readPrompt: string;
+      try {
+        readPrompt = await waitForPublishedMessageText(
+          sessionID,
+          (text) =>
+            text.includes("# Todo Tree") &&
+            text.includes(editedContent) &&
+            text.includes(`- [ ] ${editedContent} <-- current`),
+          TODO_READ_WITNESS_TIMEOUT_MS,
+        );
+      } catch (error) {
+        const outcome = await stopOcmProcess(readProcess);
+        const details = formatOcmProcessOutcome(readArgs, outcome);
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n${details}`,
+        );
+      }
+      waitIdle(sessionID);
+      const outcome = await stopOcmProcess(readProcess);
+      if (!outcome.timedOut && !outcome.killedForCleanup && outcome.code !== 0) {
+        throw new Error(formatOcmProcessOutcome(readArgs, outcome));
+      }
       expect(readPrompt).toContain(editedContent);
       expect(readPrompt).toContain(`- [ ] ${editedContent} <-- current`);
     } finally {
