@@ -177,21 +177,11 @@ function flattenMessageText(message: RawSessionMessage): string {
     .join("\n");
 }
 
-async function waitForAssistantText(
-  sessionID: string,
-  predicate: (text: string) => boolean,
-  timeoutMs: number,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const match = (await readRawSessionMessages(sessionID))
-      .filter((message) => message.info?.role === "assistant")
-      .map(flattenMessageText)
-      .find((text) => text.length > 0 && predicate(text));
-    if (match) return match;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error(`Timed out waiting for matching assistant text in session ${sessionID}.`);
+function formatRecentSessionMessages(messages: RawSessionMessage[]): string {
+  return messages
+    .slice(-12)
+    .map((message) => `${message.info?.role ?? "unknown"} :: ${flattenMessageText(message)}`)
+    .join("\n");
 }
 
 async function waitForPublishedMessageText(
@@ -200,15 +190,19 @@ async function waitForPublishedMessageText(
   timeoutMs: number,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
+  let recentMessages: RawSessionMessage[] = [];
   while (Date.now() < deadline) {
-    const match = (await readRawSessionMessages(sessionID))
+    recentMessages = await readRawSessionMessages(sessionID);
+    const match = recentMessages
       .filter((message) => message.info?.role !== "assistant")
       .map(flattenMessageText)
       .find((text) => text.length > 0 && predicate(text));
     if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`Timed out waiting for published todo tree message in session ${sessionID}.`);
+  throw new Error(
+    `Timed out waiting for published todo tree message in session ${sessionID}.\nRecent messages:\n${formatRecentSessionMessages(recentMessages)}`,
+  );
 }
 
 type TodowriteResult = {
@@ -270,7 +264,7 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        `Call todo_edit exactly once with ops=[{type:\"update\",id:\"${id}\",content:\"${editedContent}\"}]. Reply with ONLY READY.`,
+        `Call todo_edit exactly once with ops=[{type:"update",id:"${id}",content:"${editedContent}"}]. Reply with ONLY READY.`,
       ]);
       const editPrompt = await waitForPublishedMessageText(
         sessionID,
@@ -329,16 +323,18 @@ describe("improved-todowrite live e2e", () => {
       runOcm([
         "chat",
         sessionID,
-        "Call todo_read exactly once. Reply with ONLY the current top-level todo content returned by the tool.",
+        "Call todo_read exactly once. Reply with ONLY READY.",
       ]);
-      const readText = await waitForAssistantText(
+      const readPrompt = await waitForPublishedMessageText(
         sessionID,
         (text) =>
+          text.includes("# Todo Tree") &&
           text.includes(editedContent) &&
-          !text.includes("READY"),
+          text.includes(`- [ ] ${editedContent} <-- current`),
         SESSION_TIMEOUT_MS,
       );
-      expect(readText).toContain(editedContent);
+      expect(readPrompt).toContain(editedContent);
+      expect(readPrompt).toContain(`- [ ] ${editedContent} <-- current`);
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
