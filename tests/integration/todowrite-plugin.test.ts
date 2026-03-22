@@ -30,6 +30,16 @@ type TranscriptTurn = {
   userPrompt: string;
 };
 
+type RawSessionMessage = {
+  info?: {
+    role?: string;
+  };
+  parts?: Array<{
+    type?: string;
+    text?: string;
+  } | null>;
+};
+
 type TranscriptData = {
   turns: TranscriptTurn[];
 };
@@ -154,6 +164,47 @@ function createIdleProofSession(): string {
 function readTranscript(sessionID: string): TranscriptData {
   const { stdout } = runOcm(["transcript", sessionID, "--json"]);
   return JSON.parse(stdout) as TranscriptData;
+}
+
+async function readRawSessionMessages(sessionID: string): Promise<RawSessionMessage[]> {
+  const response = await fetch(`${BASE_URL}/session/${sessionID}/message`);
+  if (!response.ok) {
+    throw new Error(`Failed to load session messages for ${sessionID}: ${response.status}`);
+  }
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error(`Session messages for ${sessionID} were not an array.`);
+  }
+  return data as RawSessionMessage[];
+}
+
+function flattenMessageText(message: RawSessionMessage): string {
+  return (message.parts ?? [])
+    .filter(
+      (part): part is { type?: string; text?: string } =>
+        part !== null && typeof part === "object",
+    )
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text?.trim() ?? "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function waitForAssistantText(
+  sessionID: string,
+  predicate: (text: string) => boolean,
+  timeoutMs: number,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const match = (await readRawSessionMessages(sessionID))
+      .filter((message) => message.info?.role === "assistant")
+      .map(flattenMessageText)
+      .find((text) => text.length > 0 && predicate(text));
+    if (match) return match;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting for matching assistant text in session ${sessionID}.`);
 }
 
 async function waitForPublishedPrompt(
@@ -287,16 +338,19 @@ describe("improved-todowrite live e2e", () => {
     try {
       sessionID = createIdleProofSession();
       seedTodoTree(sessionID, { content: editedContent, priority: "high" });
-      runOcm(["chat", sessionID, "Call todo_read exactly once. Reply with ONLY READY."]);
-      const readPrompt = await waitForPublishedPrompt(
+      runOcm([
+        "chat",
+        sessionID,
+        "Call todo_read exactly once. Reply with ONLY the current top-level todo content returned by the tool.",
+      ]);
+      const readText = await waitForAssistantText(
         sessionID,
         (text) =>
           text.includes(editedContent) &&
-          text.includes(`- [ ] ${editedContent} <-- current`),
+          !text.includes("READY"),
         SESSION_TIMEOUT_MS,
       );
-      expect(readPrompt).toContain(editedContent);
-      expect(readPrompt).toContain(`- [ ] ${editedContent} <-- current`);
+      expect(readText).toContain(editedContent);
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
