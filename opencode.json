@@ -6,6 +6,7 @@
   "agent": {
     "plugin-proof": {
       "permission": {
+        "*": "deny",
         "todo_plan": "allow",
         "todo_read": "allow",
         "todo_advance": "allow",
