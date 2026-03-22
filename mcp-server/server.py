@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 FastMCP wrapper for improved-todowrite.
 
@@ -9,6 +11,7 @@ Usage:
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Annotated, Literal
@@ -26,7 +29,16 @@ mcp = FastMCP(
     ),
 )
 
-MANAGER_REPO = "file:///home/dzack/opencode-plugins/clis/todowrite"
+MANAGER_REPO = os.environ.get(
+    "TODOWRITE_CLI_SPEC",
+    "git+https://github.com/dzackgarza/todowrite-manager.git",
+).strip()
+CLI_TOOL_NAMES = {
+    "todo_plan": "todo-plan",
+    "todo_read": "todo-read",
+    "todo_advance": "todo-advance",
+    "todo_edit": "todo-edit",
+}
 
 # ─── Input models ─────────────────────────────────────────────────────────────
 
@@ -95,13 +107,14 @@ def _session_id_for_project_dir(project_dir: str) -> str:
 
 
 def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
+    cli_tool_name = CLI_TOOL_NAMES.get(tool_name, tool_name)
     cmd = [
         "uvx",
         "--from",
         MANAGER_REPO,
         "todowrite",
         "run-json",
-        tool_name,
+        cli_tool_name,
         session_id,
         json.dumps(args),
     ]

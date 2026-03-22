@@ -33,25 +33,15 @@ Register the plugin in OpenCode via npm:
 }
 ```
 
-See the sample local configuration: [`improved-todowrite/.config/opencode.json`](./improved-todowrite/.config/opencode.json).
-
 ### Verification
 
-Verification uses the package `.envrc` to export `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR`. To verify the installation locally:
+Repo-root [`opencode.json`](./opencode.json) is the canonical proof config. CI starts `opencode serve` from the repo root and relies on standard global-plus-project precedence.
+
+CI is the canonical proof gate. For local debugging, start a repo-local OpenCode server from this checkout and set `OPENCODE_BASE_URL` before running the same `just` entrypoints:
 
 ```bash
-cd ./improved-todowrite
 direnv allow .
-timeout 30 /path/to/opencode run --agent plugin-proof \
-  "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
-```
-
-If you do not use `direnv`, run the following:
-
-```bash
-OPENCODE_CONFIG=./improved-todowrite/.config/opencode.json \
-  timeout 30 /path/to/opencode run --agent plugin-proof \
-  "Use improved_todowrite to write one top-level todo with id=phase-1, content='Ship persistence layer', status='pending', priority='high'. Then use improved_todoread. After both tool calls finish, reply with ONLY READY."
+OPENCODE_BASE_URL=http://127.0.0.1:4097 just test
 ```
 
 ### MCP Installation
@@ -138,3 +128,5 @@ No arguments.
 direnv allow .
 just check
 ```
+
+Use `just typecheck`, `just test`, and `just mcp-test` for targeted gates.

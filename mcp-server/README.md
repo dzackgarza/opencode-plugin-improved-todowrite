@@ -3,7 +3,7 @@
 
 # improved-todowrite MCP Server
 
-`improved-todowrite` MCP server wraps `improved_todowrite` and `improved_todoread` with FastMCP.
+`improved-todowrite` MCP server wraps the standalone `todowrite` CLI with FastMCP.
 
 ## Installation
 
@@ -38,21 +38,41 @@ Configure OpenCode for remote-style access using `uvx` from GitHub:
 
 ## MCP Tools
 
-### `improved_todowrite`
+### `todo_plan`
 
-Write todos for a project directory.
+Create the initial todo tree for a project directory.
 
 ```text
 project_dir: string
-todos: TodoNode[]
+todos: PlanInput[]
 ```
 
-### `improved_todoread`
+### `todo_read`
 
-Read todos for a project directory.
+Read the current todo tree and current task for a project directory.
 
 ```text
 project_dir: string
+```
+
+### `todo_advance`
+
+Advance the current task in order.
+
+```text
+project_dir: string
+id: string
+action: "complete" | "cancel"
+reason?: string
+```
+
+### `todo_edit`
+
+Make surgical changes to pending parts of the todo tree.
+
+```text
+project_dir: string
+ops: EditOp[]
 ```
 
 Hashing `project_dir` generates a stable synthetic session ID. This allows MCP callers to retrieve the same persisted tree.
