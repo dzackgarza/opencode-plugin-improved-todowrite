@@ -23,6 +23,8 @@ const PROJECT_DIR = process.cwd();
 const CLI_TOOL_DIR = mkdtempSync(join(tmpdir(), "todowrite-proof-cli-"));
 const REAL_TOOL_CALL_RULE =
   "Use the real OpenCode tool-call mechanism. Plain text like functions.todo_read does not count.";
+const REAL_TOOL_CALL_READ_RULE =
+  "Do not output code fences, pseudocode, or await functions.todo_read(...). Invoke the real todo_read tool with empty arguments instead.";
 let ocmBinaryPath: string | undefined;
 let todowriteBinaryPath: string | undefined;
 
@@ -481,7 +483,7 @@ describe("improved-todowrite live e2e", () => {
       const readArgs = [
         "chat",
         sessionID,
-        `Call todo_read exactly once with empty arguments {}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
+        `Call todo_read exactly once with empty arguments {}. ${REAL_TOOL_CALL_RULE} ${REAL_TOOL_CALL_READ_RULE} Reply with ONLY READY.`,
       ];
       const readProcess = startOcm(readArgs);
       let readPrompt: string;
