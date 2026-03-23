@@ -120,7 +120,7 @@ class TestTodoTreeServer:
             name="todo_advance",
             arguments={
                 "project_dir": PROJECT_DIR,
-                "id": "first-task",
+                "task_id": "first-task",
                 "action": "complete",
             },
         )
@@ -142,7 +142,7 @@ class TestTodoTreeServer:
             name="todo_advance",
             arguments={
                 "project_dir": PROJECT_DIR,
-                "id": "second-task",
+                "task_id": "second-task",
                 "action": "complete",
             },
         )

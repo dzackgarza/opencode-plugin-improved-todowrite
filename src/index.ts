@@ -19,7 +19,11 @@ async function runTodowrite(
       timeout: CLI_TIMEOUT_MS,
     },
   );
-  return JSON.parse(stdout);
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return stdout;
+  }
 }
 
 type TodoResult = {

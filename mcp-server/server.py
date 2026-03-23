@@ -54,7 +54,7 @@ class PlanInput(BaseModel):
         default=None,
         description="Priority level (high/medium/low). Defaults to medium if omitted.",
     )
-    children: list[PlanInput] = Field(
+    children: list["PlanInput"] = Field(
         default_factory=list, description="Nested subtasks"
     )
 
@@ -120,11 +120,12 @@ def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
         json.dumps(args),
     ]
 
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603
         cmd,
         capture_output=True,
         text=True,
         timeout=60,
+        check=False,
     )
 
     if result.returncode != 0:
@@ -218,7 +219,7 @@ async def todo_advance(
             description="Absolute project directory path used to scope the todo store"
         ),
     ],
-    id: Annotated[  # noqa: A002
+    task_id: Annotated[
         str,
         Field(description="Exact ID of the current task, as shown in todo_read output"),
     ],
@@ -235,11 +236,11 @@ async def todo_advance(
 ):
     """
     Mark the current task as completed or cancelled.
-    The id must match the current task exactly — this proves you know what you are completing.
+    The task_id must match the current task exactly — this proves you know what you are completing.
     Tasks must be advanced in order; you cannot skip ahead.
     """
     session_id = _session_id_for_project_dir(project_dir)
-    args: dict = {"id": id, "action": action}  # noqa: A001
+    args: dict = {"id": task_id, "action": action}
     if reason is not None:
         args["reason"] = reason
     return _run_tool(session_id, "todo_advance", args)
