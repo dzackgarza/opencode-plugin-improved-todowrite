@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { setTimeout as delayMs } from "node:timers/promises";
 import { promisify } from "node:util";
 import { type Plugin, tool } from "@opencode-ai/plugin";
 
@@ -7,21 +8,20 @@ const CLI_TIMEOUT_MS = 60_000;
 const CLI_SPEC =
   process.env.TODOWRITE_CLI_SPEC ?? "git+https://github.com/dzackgarza/todowrite-manager.git";
 
-function runTodowrite(
-  sessionID: string,
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<unknown> {
+function runTodowrite(sessionID: string, toolName: string, args: Record<string, unknown>) {
   return execFileAsync(
     "uvx",
     ["--from", CLI_SPEC, "todowrite", "run-json", toolName, sessionID, JSON.stringify(args)],
     { timeout: CLI_TIMEOUT_MS },
   ).then((r: { stdout: string }) => {
+    // Initialize to the raw string so the variable is never undefined (fp/no-nil).
+    let result: unknown = r.stdout;
     try {
-      return JSON.parse(r.stdout) as unknown;
+      result = JSON.parse(r.stdout) as unknown;
     } catch {
-      return r.stdout as unknown;
+      // not valid JSON; result stays as raw stdout string
     }
+    return result;
   });
 }
 
@@ -39,9 +39,9 @@ function setDisplay(setMeta: MetadataFn, display: TodoResult["display"]): string
 }
 
 export const ImprovedTodowritePlugin: Plugin = ({ client }) => {
-  function publishTodoTree(sessionID: string, result: TodoResult): Promise<unknown> {
+  function publishTodoTree(sessionID: string, result: TodoResult) {
     const promptFn = client.session?.prompt;
-    if (promptFn === undefined) return Promise.resolve("skipped" as const);
+    if (promptFn === undefined) return delayMs(0).then(() => "skipped" as const);
     return promptFn({
       path: { id: sessionID },
       body: { noReply: true, parts: [{ type: "text", text: result.markdown }] },
@@ -58,14 +58,14 @@ export const ImprovedTodowritePlugin: Plugin = ({ client }) => {
     toolName: string,
     args: Record<string, unknown>,
     setMeta: MetadataFn,
-  ): Promise<string> {
+  ) {
     return runTodowrite(sessionID, toolName, args).then((raw) => {
       const result = raw as TodoResult;
       return publishTodoTree(sessionID, result).then(() => setDisplay(setMeta, result.display));
     });
   }
 
-  return Promise.resolve({
+  return delayMs(0).then(() => ({
     tool: {
       todo_plan: tool({
         description: "Create the initial hierarchical todo plan for this session.",
@@ -125,5 +125,5 @@ export const ImprovedTodowritePlugin: Plugin = ({ client }) => {
         },
       }),
     },
-  });
+  }));
 };
