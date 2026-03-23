@@ -1,29 +1,24 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { type Plugin, type ToolContext, tool } from "@opencode-ai/plugin";
+import { type Plugin, type PluginInput, type ToolContext, tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 60_000;
 const CLI_SPEC =
   process.env.TODOWRITE_CLI_SPEC ?? "git+https://github.com/dzackgarza/todowrite-manager.git";
 
-async function runTodowrite(
-  sessionID: string,
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<unknown> {
-  const { stdout } = await execFileAsync(
+function runTodowrite(sessionID: string, toolName: string, args: Record<string, unknown>) {
+  return execFileAsync(
     "uvx",
     ["--from", CLI_SPEC, "todowrite", "run-json", toolName, sessionID, JSON.stringify(args)],
-    {
-      timeout: CLI_TIMEOUT_MS,
-    },
-  );
-  try {
-    return JSON.parse(stdout);
-  } catch {
-    return stdout;
-  }
+    { timeout: CLI_TIMEOUT_MS },
+  ).then(({ stdout }) => {
+    try {
+      return JSON.parse(stdout) as unknown;
+    } catch {
+      return stdout as unknown;
+    }
+  });
 }
 
 type TodoResult = {
@@ -37,25 +32,19 @@ function setDisplay(context: ToolContext, display: TodoResult["display"]): strin
   return display.output;
 }
 
-export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
-  async function publishTodoTree(sessionID: string, result: TodoResult) {
-    if (!client.session?.prompt) return;
-
-    await client.session.prompt({
+export const ImprovedTodowritePlugin: Plugin = async ({ client }: PluginInput) => {
+  function publishTodoTree(sessionID: string, result: TodoResult) {
+    const promptFn = client.session?.prompt;
+    if (!promptFn) return "skipped" as const;
+    return promptFn({
       path: { id: sessionID },
-      body: {
-        noReply: true,
-        parts: [{ type: "text", text: result.markdown }],
-      },
-    });
-
-    await client.session.prompt({
-      path: { id: sessionID },
-      body: {
-        noReply: true,
-        parts: [{ type: "text", synthetic: true, text: result.reminder }],
-      },
-    });
+      body: { noReply: true, parts: [{ type: "text", text: result.markdown }] },
+    }).then(() =>
+      promptFn({
+        path: { id: sessionID },
+        body: { noReply: true, parts: [{ type: "text", synthetic: true, text: result.reminder }] },
+      }),
+    );
   }
 
   return {
@@ -65,7 +54,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
         args: {
           todos: tool.schema.array(tool.schema.unknown()).describe("Top-level tasks."),
         },
-        async execute(args, context) {
+        async execute(args: { todos: unknown[] }, context: ToolContext) {
           await context.ask({
             permission: "todo_plan",
             patterns: ["*"],
@@ -81,7 +70,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
       todo_read: tool({
         description: "Read the current todo tree for this session.",
         args: {},
-        async execute(_args, context) {
+        async execute(_args: Record<string, never>, context: ToolContext) {
           await context.ask({
             permission: "todo_read",
             patterns: ["*"],
@@ -101,7 +90,10 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
           action: tool.schema.enum(["complete", "cancel"]).describe("complete or cancel"),
           reason: tool.schema.string().optional().describe("Required for cancel"),
         },
-        async execute(args, context) {
+        async execute(
+          args: { id: string; action: "complete" | "cancel"; reason?: string },
+          context: ToolContext,
+        ) {
           await context.ask({
             permission: "todo_advance",
             patterns: ["*"],
@@ -123,7 +115,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
         args: {
           ops: tool.schema.array(tool.schema.unknown()).describe("Edit operations"),
         },
-        async execute(args, context) {
+        async execute(args: { ops: unknown[] }, context: ToolContext) {
           await context.ask({
             permission: "todo_edit",
             patterns: ["*"],
