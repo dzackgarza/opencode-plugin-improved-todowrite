@@ -1,5 +1,6 @@
 set fallback := true
 repo_root := justfile_directory()
+bun_qc_justfile := env_var_or_default("OPENCODE_BUN_QC_JUSTFILE", "/home/dzack/ai/quality-control/justfile-bun")
 
 default:
   @just test
@@ -28,6 +29,14 @@ _typecheck:
 _quality-control: justfile-hygiene
   #!/usr/bin/env bash
   set -euo pipefail
+  just --justfile "{{bun_qc_justfile}}" --working-directory "{{repo_root}}" _biome
+  just --justfile "{{bun_qc_justfile}}" --working-directory "{{repo_root}}" _semgrep
+  exec just --justfile "{{bun_qc_justfile}}" --working-directory "{{repo_root}}" _lizard
+
+[private]
+_integration-tests: justfile-hygiene
+  #!/usr/bin/env bash
+  set -euo pipefail
   cd "{{repo_root}}"
   exec direnv exec "{{repo_root}}" bun test tests/integration
 
@@ -39,7 +48,7 @@ _mcp-test:
 
 mcp-test: justfile-hygiene _mcp-test
 
-test: justfile-hygiene _typecheck _quality-control _mcp-test
+test: justfile-hygiene _typecheck _quality-control _integration-tests _mcp-test
 
 check: test
 
@@ -50,7 +59,6 @@ setup-npm-trust:
 
 publish: check
   direnv exec "{{repo_root}}" npm publish
-
 
 # Bump patch version, commit, and tag
 bump-patch:
