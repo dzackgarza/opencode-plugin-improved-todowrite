@@ -9,10 +9,10 @@ Usage:
 
 from __future__ import annotations
 
-# pylint: disable=redefined-builtin  # 'id' is an MCP tool parameter name, not a variable
 import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Annotated, Literal
@@ -100,6 +100,9 @@ EditOp = Annotated[AddOp | UpdateOp | CancelOp, Field(discriminator="type")]
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+_SESSION_ID_RE = re.compile(r"^mcp_proj_[0-9a-f]{16}$")
+_VALID_CLI_TOOLS = frozenset(CLI_TOOL_NAMES.values())
+
 
 def _session_id_for_project_dir(project_dir: str) -> str:
     normalized = str(Path(project_dir).expanduser().resolve())
@@ -107,40 +110,28 @@ def _session_id_for_project_dir(project_dir: str) -> str:
     return f"mcp_proj_{digest}"
 
 
-def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
-    cli_tool_name = CLI_TOOL_NAMES.get(tool_name, tool_name)
-    cmd = [
-        "uvx",
-        "--from",
-        MANAGER_REPO,
-        "todowrite",
-        "run-json",
-        cli_tool_name,
-        session_id,
-        json.dumps(args),
-    ]
-
-    result = subprocess.run(  # noqa: S603
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-
-    if result.returncode != 0:
-        return f"Error executing {tool_name}: {result.stderr or result.stdout}"
-
-    stdout = result.stdout.strip()
+def _parse_tool_output(stdout: str) -> str | dict:
     if not stdout:
         return ""
-
     try:
         data = json.loads(stdout)
-        # Return the display output for MCP compatibility if it exists
         return data.get("display", data)
     except json.JSONDecodeError:
         return stdout
+
+
+def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
+    cli_tool_name = CLI_TOOL_NAMES.get(tool_name, tool_name)
+    if not _SESSION_ID_RE.match(session_id):
+        raise ValueError(f"Invalid session_id: {session_id!r}")
+    if cli_tool_name not in _VALID_CLI_TOOLS:
+        raise ValueError(f"Unknown CLI tool: {cli_tool_name!r}")
+    cmd = ["uvx", "--from", MANAGER_REPO, "todowrite",
+           "run-json", cli_tool_name, session_id, json.dumps(args)]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    if result.returncode != 0:
+        return f"Error executing {tool_name}: {result.stderr or result.stdout}"
+    return _parse_tool_output(result.stdout.strip())
 
 
 # ─── Tools ────────────────────────────────────────────────────────────────────

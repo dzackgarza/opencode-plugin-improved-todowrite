@@ -1,42 +1,41 @@
-# ruff: noqa: S101
-# pylint: disable=redefined-outer-name
 import os
-import sys
 import tempfile
-from pathlib import Path
 
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from server import mcp  # noqa: E402
+from server import mcp
 
 PROJECT_DIR = "/tmp/opencode-project-a"
 OTHER_PROJECT_DIR = "/tmp/opencode-project-b"
 
 
 @pytest.fixture
-async def mcp_client():
+async def client():
     with tempfile.TemporaryDirectory(prefix="improved-todo-mcp-") as temp_dir:
         os.environ["IMPROVED_TODO_DIR"] = temp_dir
-        async with Client(mcp) as client:
-            yield client
+        async with Client(mcp) as c:
+            yield c
         os.environ.pop("IMPROVED_TODO_DIR", None)
 
 
 class TestTodoTreeServer:
-    async def test_list_tools(self, mcp_client: Client):
-        tools = await mcp_client.list_tools()
+    async def test_list_tools(self, client: Client):
+        tools = await client.list_tools()
         tool_names = [tool.name for tool in tools]
 
-        assert "todo_plan" in tool_names
-        assert "todo_read" in tool_names
-        assert "todo_advance" in tool_names
-        assert "todo_edit" in tool_names
+        if "todo_plan" not in tool_names:
+            raise AssertionError("Expected 'todo_plan' in tool_names")
+        if "todo_read" not in tool_names:
+            raise AssertionError("Expected 'todo_read' in tool_names")
+        if "todo_advance" not in tool_names:
+            raise AssertionError("Expected 'todo_advance' in tool_names")
+        if "todo_edit" not in tool_names:
+            raise AssertionError("Expected 'todo_edit' in tool_names")
 
-    async def test_plan_then_read(self, mcp_client: Client):
-        plan_result = await mcp_client.call_tool(
+    async def test_plan_then_read(self, client: Client):
+        plan_result = await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
@@ -50,7 +49,7 @@ class TestTodoTreeServer:
                 ],
             },
         )
-        read_result = await mcp_client.call_tool(
+        read_result = await client.call_tool(
             name="todo_read",
             arguments={"project_dir": PROJECT_DIR},
         )
@@ -58,49 +57,55 @@ class TestTodoTreeServer:
         plan_text = plan_result.content[0].text
         read_text = read_result.content[0].text
 
-        # Both should contain the content and current task
-        assert "Design the API" in plan_text
-        assert "Write spec" in plan_text
-        assert "write-spec" in plan_text  # slug ID
-        assert "Current task:" in plan_text
-        assert plan_text == read_text
+        if "Design the API" not in plan_text:
+            raise AssertionError("Expected 'Design the API' in plan output")
+        if "Write spec" not in plan_text:
+            raise AssertionError("Expected 'Write spec' in plan output")
+        if "write-spec" not in plan_text:
+            raise AssertionError("Expected slug 'write-spec' in plan output")
+        if "Current task:" not in plan_text:
+            raise AssertionError("Expected 'Current task:' in plan output")
+        if plan_text != read_text:
+            raise AssertionError("Expected plan and read outputs to match")
 
-    async def test_plan_blocked_on_second_call(self, mcp_client: Client):
-        await mcp_client.call_tool(
+    async def test_plan_blocked_on_second_call(self, client: Client):
+        await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
                 "todos": [{"content": "First task"}],
             },
         )
-        second_result = await mcp_client.call_tool(
+        second_result = await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
                 "todos": [{"content": "Overwrite attempt"}],
             },
         )
-        # Should return an error string, not a plan
-        assert "already exists" in second_result.content[0].text
+        if "already exists" not in second_result.content[0].text:
+            raise AssertionError("Expected 'already exists' in second plan response")
 
-    async def test_sessions_are_isolated(self, mcp_client: Client):
-        await mcp_client.call_tool(
+    async def test_sessions_are_isolated(self, client: Client):
+        await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
                 "todos": [{"content": "Project A task"}],
             },
         )
-        other_result = await mcp_client.call_tool(
+        other_result = await client.call_tool(
             name="todo_read",
             arguments={"project_dir": OTHER_PROJECT_DIR},
         )
         other_text = other_result.content[0].text
-        assert "Project A task" not in other_text
-        assert "topLevelCount" in other_text  # empty result still has metadata
+        if "Project A task" in other_text:
+            raise AssertionError("Expected Project A task to be absent from other project")
+        if "topLevelCount" not in other_text:
+            raise AssertionError("Expected 'topLevelCount' in empty result metadata")
 
-    async def test_advance_completes_current_task(self, mcp_client: Client):
-        await mcp_client.call_tool(
+    async def test_advance_completes_current_task(self, client: Client):
+        await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
@@ -110,13 +115,14 @@ class TestTodoTreeServer:
                 ],
             },
         )
-        read_before = await mcp_client.call_tool(
+        read_before = await client.call_tool(
             name="todo_read",
             arguments={"project_dir": PROJECT_DIR},
         )
-        assert "first-task" in read_before.content[0].text
+        if "first-task" not in read_before.content[0].text:
+            raise AssertionError("Expected 'first-task' to be current task")
 
-        advance_result = await mcp_client.call_tool(
+        advance_result = await client.call_tool(
             name="todo_advance",
             arguments={
                 "project_dir": PROJECT_DIR,
@@ -124,11 +130,11 @@ class TestTodoTreeServer:
                 "action": "complete",
             },
         )
-        advance_text = advance_result.content[0].text
-        assert "second-task" in advance_text
+        if "second-task" not in advance_result.content[0].text:
+            raise AssertionError("Expected 'second-task' to appear after advancing")
 
-    async def test_advance_rejects_wrong_task_id(self, mcp_client: Client):
-        await mcp_client.call_tool(
+    async def test_advance_rejects_wrong_task_id(self, client: Client):
+        await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
@@ -138,7 +144,7 @@ class TestTodoTreeServer:
                 ],
             },
         )
-        result = await mcp_client.call_tool(
+        result = await client.call_tool(
             name="todo_advance",
             arguments={
                 "project_dir": PROJECT_DIR,
@@ -146,17 +152,18 @@ class TestTodoTreeServer:
                 "action": "complete",
             },
         )
-        assert "current task" in result.content[0].text.lower()
+        if "current task" not in result.content[0].text.lower():
+            raise AssertionError("Expected error message about current task")
 
-    async def test_edit_adds_and_updates_pending_tasks(self, mcp_client: Client):
-        await mcp_client.call_tool(
+    async def test_edit_adds_and_updates_pending_tasks(self, client: Client):
+        await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
                 "todos": [{"content": "Original task", "priority": "low"}],
             },
         )
-        edit_result = await mcp_client.call_tool(
+        edit_result = await client.call_tool(
             name="todo_edit",
             arguments={
                 "project_dir": PROJECT_DIR,
@@ -172,12 +179,14 @@ class TestTodoTreeServer:
             },
         )
         edit_text = edit_result.content[0].text
-        assert "appended-task" in edit_text
-        assert "Revised task" in edit_text
+        if "appended-task" not in edit_text:
+            raise AssertionError("Expected 'appended-task' in edit output")
+        if "Revised task" not in edit_text:
+            raise AssertionError("Expected 'Revised task' in edit output")
 
-    async def test_plan_rejects_invalid_priority(self, mcp_client: Client):
+    async def test_plan_rejects_invalid_priority(self, client: Client):
         with pytest.raises(ToolError):
-            await mcp_client.call_tool(
+            await client.call_tool(
                 name="todo_plan",
                 arguments={
                     "project_dir": PROJECT_DIR,
@@ -185,8 +194,8 @@ class TestTodoTreeServer:
                 },
             )
 
-    async def test_edit_rejects_status_field_in_update_op(self, mcp_client: Client):
-        await mcp_client.call_tool(
+    async def test_edit_rejects_status_field_in_update_op(self, client: Client):
+        await client.call_tool(
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
@@ -194,7 +203,7 @@ class TestTodoTreeServer:
             },
         )
         with pytest.raises(ToolError):
-            await mcp_client.call_tool(
+            await client.call_tool(
                 name="todo_edit",
                 arguments={
                     "project_dir": PROJECT_DIR,
