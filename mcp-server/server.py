@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 FastMCP wrapper for improved-todowrite.
 
@@ -8,6 +6,8 @@ This server invokes the standalone todowrite CLI via uvx.
 Usage:
     uv run fastmcp run server.py
 """
+
+from __future__ import annotations
 
 import hashlib
 import json
@@ -217,7 +217,7 @@ async def todo_advance(
             description="Absolute project directory path used to scope the todo store"
         ),
     ],
-    id: Annotated[
+    id: Annotated[  # noqa: A002
         str,
         Field(description="Exact ID of the current task, as shown in todo_read output"),
     ],
@@ -238,7 +238,7 @@ async def todo_advance(
     Tasks must be advanced in order; you cannot skip ahead.
     """
     session_id = _session_id_for_project_dir(project_dir)
-    args: dict = {"id": id, "action": action}
+    args: dict = {"id": id, "action": action}  # noqa: A001
     if reason is not None:
         args["reason"] = reason
     return _run_tool(session_id, "todo_advance", args)

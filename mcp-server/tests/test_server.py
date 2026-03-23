@@ -1,3 +1,5 @@
+# ruff: noqa: S101
+# pylint: disable=redefined-outer-name
 import os
 import sys
 import tempfile
@@ -8,7 +10,7 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from server import mcp
+from server import mcp  # noqa: E402
 
 PROJECT_DIR = "/tmp/opencode-project-a"
 OTHER_PROJECT_DIR = "/tmp/opencode-project-b"
