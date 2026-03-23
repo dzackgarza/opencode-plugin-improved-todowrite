@@ -126,9 +126,11 @@ def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
         raise ValueError(f"Invalid session_id: {session_id!r}")
     if cli_tool_name not in _VALID_CLI_TOOLS:
         raise ValueError(f"Unknown CLI tool: {cli_tool_name!r}")
-    cmd = ["uvx", "--from", MANAGER_REPO, "todowrite",
-           "run-json", cli_tool_name, session_id, json.dumps(args)]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    result = subprocess.run(
+        ["uvx", "--from", MANAGER_REPO, "todowrite",
+         "run-json", cli_tool_name, session_id, json.dumps(args)],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
     if result.returncode != 0:
         return f"Error executing {tool_name}: {result.stderr or result.stdout}"
     return _parse_tool_output(result.stdout.strip())
