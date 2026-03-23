@@ -14,3 +14,7 @@ dev = ["pytest-asyncio>=0.24.0", "inline-snapshot>=0.10.0"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.bandit]
+skips = ["B011"]
+exclude_dirs = ["tests"]

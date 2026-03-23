@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+# pylint: disable=redefined-builtin  # 'id' is an MCP tool parameter name, not a variable
 import hashlib
 import json
 import os
