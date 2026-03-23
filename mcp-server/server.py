@@ -134,6 +134,29 @@ def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
     return _parse_tool_output(result.stdout.strip())
 
 
+# ─── Shared parameter type aliases ────────────────────────────────────────────
+
+_ProjectDirField = Annotated[
+    str,
+    Field(description="Absolute project directory path used to scope the todo store"),
+]
+_TaskIdField = Annotated[
+    str,
+    Field(description="Exact ID of the current task, as shown in todo_read output"),
+]
+_ActionField = Annotated[
+    Literal["complete", "cancel"],
+    Field(description="complete — mark done; cancel — mark cancelled with a reason"),
+]
+_ReasonField = Annotated[
+    str | None,
+    Field(description="Required when action is cancel"),
+]
+_OpsField = Annotated[
+    list[EditOp],
+    Field(description="Edit ops: add (new task), update (content/priority by ID), cancel (with reason)."),
+]
+
 # ─── Tools ────────────────────────────────────────────────────────────────────
 
 
@@ -147,12 +170,7 @@ def _run_tool(session_id: str, tool_name: str, args: dict) -> str | dict:
     }
 )
 async def todo_plan(
-    project_dir: Annotated[
-        str,
-        Field(
-            description="Absolute project directory path used to scope the todo store"
-        ),
-    ],
+    project_dir: _ProjectDirField,
     todos: Annotated[
         list[PlanInput],
         Field(description="Top-level tasks. Each may contain nested subtasks."),
@@ -166,9 +184,7 @@ async def todo_plan(
     return _run_tool(
         session_id,
         "todo_plan",
-        {
-            "todos": [t.model_dump(exclude_none=True) for t in todos],
-        },
+        {"todos": [t.model_dump(exclude_none=True) for t in todos]},
     )
 
 
@@ -182,12 +198,7 @@ async def todo_plan(
     }
 )
 async def todo_read(
-    project_dir: Annotated[
-        str,
-        Field(
-            description="Absolute project directory path used to scope the todo store"
-        ),
-    ],
+    project_dir: _ProjectDirField,
 ):
     """Read the current todo tree, including which task is currently active."""
     session_id = _session_id_for_project_dir(project_dir)
@@ -204,26 +215,10 @@ async def todo_read(
     }
 )
 async def todo_advance(
-    project_dir: Annotated[
-        str,
-        Field(
-            description="Absolute project directory path used to scope the todo store"
-        ),
-    ],
-    task_id: Annotated[
-        str,
-        Field(description="Exact ID of the current task, as shown in todo_read output"),
-    ],
-    action: Annotated[
-        Literal["complete", "cancel"],
-        Field(
-            description="complete — mark done; cancel — mark cancelled with a reason"
-        ),
-    ],
-    reason: Annotated[
-        str | None,
-        Field(description="Required when action is cancel"),
-    ] = None,
+    project_dir: _ProjectDirField,
+    task_id: _TaskIdField,
+    action: _ActionField,
+    reason: _ReasonField = None,
 ):
     """
     Mark the current task as completed or cancelled.
@@ -247,23 +242,8 @@ async def todo_advance(
     }
 )
 async def todo_edit(
-    project_dir: Annotated[
-        str,
-        Field(
-            description="Absolute project directory path used to scope the todo store"
-        ),
-    ],
-    ops: Annotated[
-        list[EditOp],
-        Field(
-            description=(
-                "Ordered list of edit operations. "
-                "add: insert a new pending task. "
-                + "update: change content or priority of a pending task by ID. "
-                + "cancel: cancel a pending task with a required reason."
-            )
-        ),
-    ],
+    project_dir: _ProjectDirField,
+    ops: _OpsField,
 ):
     """
     Make surgical changes to the pending portions of the todo tree.
@@ -273,9 +253,7 @@ async def todo_edit(
     return _run_tool(
         session_id,
         "todo_edit",
-        {
-            "ops": [op.model_dump(exclude_none=True) for op in ops],
-        },
+        {"ops": [op.model_dump(exclude_none=True) for op in ops]},
     )
 
 

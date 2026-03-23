@@ -32,6 +32,11 @@ type TodoResult = {
   display: { title: string; metadata: Record<string, unknown>; output: string };
 };
 
+function setDisplay(context: ToolContext, display: TodoResult["display"]): string {
+  context.metadata({ title: display.title, metadata: display.metadata });
+  return display.output;
+}
+
 export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
   async function publishTodoTree(sessionID: string, result: TodoResult) {
     if (!client.session?.prompt) return;
@@ -51,11 +56,6 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
         parts: [{ type: "text", synthetic: true, text: result.reminder }],
       },
     });
-  }
-
-  function setDisplay(context: ToolContext, display: TodoResult["display"]): string {
-    context.metadata({ title: display.title, metadata: display.metadata });
-    return display.output;
   }
 
   return {

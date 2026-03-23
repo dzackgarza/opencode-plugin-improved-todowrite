@@ -9,10 +9,14 @@ from server import mcp
 
 PROJECT_DIR = "/tmp/opencode-project-a"
 OTHER_PROJECT_DIR = "/tmp/opencode-project-b"
+_SAMPLE_TODOS = [
+    {"content": "Design the API", "priority": "high", "children": [{"content": "Write spec"}]},
+    {"content": "Implement the API"},
+]
 
 
-@pytest.fixture
-async def client():
+@pytest.fixture(name="client")
+async def client_fixture():
     with tempfile.TemporaryDirectory(prefix="improved-todo-mcp-") as temp_dir:
         os.environ["IMPROVED_TODO_DIR"] = temp_dir
         async with Client(mcp) as c:
@@ -37,26 +41,13 @@ class TestTodoTreeServer:
     async def test_plan_then_read(self, client: Client):
         plan_result = await client.call_tool(
             name="todo_plan",
-            arguments={
-                "project_dir": PROJECT_DIR,
-                "todos": [
-                    {
-                        "content": "Design the API",
-                        "priority": "high",
-                        "children": [{"content": "Write spec"}],
-                    },
-                    {"content": "Implement the API"},
-                ],
-            },
+            arguments={"project_dir": PROJECT_DIR, "todos": _SAMPLE_TODOS},
         )
         read_result = await client.call_tool(
-            name="todo_read",
-            arguments={"project_dir": PROJECT_DIR},
+            name="todo_read", arguments={"project_dir": PROJECT_DIR}
         )
-
         plan_text = plan_result.content[0].text
         read_text = read_result.content[0].text
-
         if "Design the API" not in plan_text:
             raise AssertionError("Expected 'Design the API' in plan output")
         if "Write spec" not in plan_text:
@@ -109,26 +100,17 @@ class TestTodoTreeServer:
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
-                "todos": [
-                    {"content": "First task", "priority": "high"},
-                    {"content": "Second task"},
-                ],
+                "todos": [{"content": "First task", "priority": "high"}, {"content": "Second task"}],
             },
         )
         read_before = await client.call_tool(
-            name="todo_read",
-            arguments={"project_dir": PROJECT_DIR},
+            name="todo_read", arguments={"project_dir": PROJECT_DIR}
         )
         if "first-task" not in read_before.content[0].text:
             raise AssertionError("Expected 'first-task' to be current task")
-
         advance_result = await client.call_tool(
             name="todo_advance",
-            arguments={
-                "project_dir": PROJECT_DIR,
-                "task_id": "first-task",
-                "action": "complete",
-            },
+            arguments={"project_dir": PROJECT_DIR, "task_id": "first-task", "action": "complete"},
         )
         if "second-task" not in advance_result.content[0].text:
             raise AssertionError("Expected 'second-task' to appear after advancing")
@@ -138,10 +120,7 @@ class TestTodoTreeServer:
             name="todo_plan",
             arguments={
                 "project_dir": PROJECT_DIR,
-                "todos": [
-                    {"content": "First task"},
-                    {"content": "Second task"},
-                ],
+                "todos": [{"content": "First task"}, {"content": "Second task"}],
             },
         )
         result = await client.call_tool(
@@ -158,25 +137,15 @@ class TestTodoTreeServer:
     async def test_edit_adds_and_updates_pending_tasks(self, client: Client):
         await client.call_tool(
             name="todo_plan",
-            arguments={
-                "project_dir": PROJECT_DIR,
-                "todos": [{"content": "Original task", "priority": "low"}],
-            },
+            arguments={"project_dir": PROJECT_DIR,
+                       "todos": [{"content": "Original task", "priority": "low"}]},
         )
+        ops = [
+            {"type": "add", "content": "Appended task", "priority": "high"},
+            {"type": "update", "id": "original-task", "content": "Revised task", "priority": "high"},
+        ]
         edit_result = await client.call_tool(
-            name="todo_edit",
-            arguments={
-                "project_dir": PROJECT_DIR,
-                "ops": [
-                    {"type": "add", "content": "Appended task", "priority": "high"},
-                    {
-                        "type": "update",
-                        "id": "original-task",
-                        "content": "Revised task",
-                        "priority": "high",
-                    },
-                ],
-            },
+            name="todo_edit", arguments={"project_dir": PROJECT_DIR, "ops": ops}
         )
         edit_text = edit_result.content[0].text
         if "appended-task" not in edit_text:
@@ -207,12 +176,6 @@ class TestTodoTreeServer:
                 name="todo_edit",
                 arguments={
                     "project_dir": PROJECT_DIR,
-                    "ops": [
-                        {
-                            "type": "update",
-                            "id": "original-task",
-                            "status": "completed",
-                        }
-                    ],
+                    "ops": [{"type": "update", "id": "original-task", "status": "completed"}],
                 },
             )
