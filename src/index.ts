@@ -63,7 +63,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
       todo_plan: tool({
         description: "Create the initial hierarchical todo plan for this session.",
         args: {
-          todos: tool.schema.array(tool.schema.any()).describe("Top-level tasks."),
+          todos: tool.schema.array(tool.schema.unknown()).describe("Top-level tasks."),
         },
         async execute(args, context) {
           await context.ask({
@@ -121,7 +121,7 @@ export const ImprovedTodowritePlugin: Plugin = async ({ client }) => {
       todo_edit: tool({
         description: "Make surgical changes to the pending portions of the todo tree.",
         args: {
-          ops: tool.schema.array(tool.schema.any()).describe("Edit operations"),
+          ops: tool.schema.array(tool.schema.unknown()).describe("Edit operations"),
         },
         async execute(args, context) {
           await context.ask({
