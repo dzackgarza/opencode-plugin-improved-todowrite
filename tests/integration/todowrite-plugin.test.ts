@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,8 @@ if (!BASE_URL) {
 
 const OCM_PACKAGE = "git+https://github.com/dzackgarza/opencode-manager.git";
 const TODOWRITE_PACKAGE =
-  process.env.TODOWRITE_CLI_SPEC?.trim() || "git+https://github.com/dzackgarza/todowrite-manager.git";
+  process.env.TODOWRITE_CLI_SPEC?.trim() ||
+  "git+https://github.com/dzackgarza/todowrite-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SESSION_TIMEOUT_MS = 240_000;
 const TODO_READ_WITNESS_TIMEOUT_MS = 90_000;
@@ -63,9 +64,13 @@ afterAll(() => {
 
 function ensureCliBinaries(): void {
   if (ocmBinaryPath && todowriteBinaryPath) return;
-  const binDir = process.platform === "win32" ? join(CLI_TOOL_DIR, "Scripts") : join(CLI_TOOL_DIR, "bin");
+  const binDir =
+    process.platform === "win32" ? join(CLI_TOOL_DIR, "Scripts") : join(CLI_TOOL_DIR, "bin");
   const candidateOcm = join(binDir, process.platform === "win32" ? "ocm.exe" : "ocm");
-  const candidateTodowrite = join(binDir, process.platform === "win32" ? "todowrite.exe" : "todowrite");
+  const candidateTodowrite = join(
+    binDir,
+    process.platform === "win32" ? "todowrite.exe" : "todowrite",
+  );
   const pythonBinary = join(binDir, process.platform === "win32" ? "python.exe" : "python");
   if (!existsSync(candidateOcm) || !existsSync(candidateTodowrite)) {
     const createVenv = spawnSync("uv", ["venv", CLI_TOOL_DIR], {
@@ -116,17 +121,13 @@ function getTodowriteBinaryPath(): string {
 }
 
 function runOcm(args: string[]) {
-  const result = spawnSync(
-    getOcmBinaryPath(),
-    args,
-    {
-      env: { ...process.env, OPENCODE_BASE_URL: BASE_URL },
-      cwd: PROJECT_DIR,
-      encoding: "utf8",
-      timeout: SESSION_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER,
-    },
-  );
+  const result = spawnSync(getOcmBinaryPath(), args, {
+    env: { ...process.env, OPENCODE_BASE_URL: BASE_URL },
+    cwd: PROJECT_DIR,
+    encoding: "utf8",
+    timeout: SESSION_TIMEOUT_MS,
+    maxBuffer: MAX_BUFFER,
+  });
   if (result.error) throw result.error;
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
@@ -194,9 +195,7 @@ async function waitForOcmProcess(
   };
 }
 
-async function stopOcmProcess(
-  process: RunningOcmProcess,
-): Promise<{
+async function stopOcmProcess(process: RunningOcmProcess): Promise<{
   code: number | null;
   timedOut: boolean;
   stdout: string;
@@ -226,7 +225,7 @@ function formatOcmProcessOutcome(
     ? `ocm ${args.join(" ")} did not exit before cleanup`
     : outcome.killedForCleanup
       ? `ocm ${args.join(" ")} was terminated during cleanup`
-    : `ocm ${args.join(" ")} exited with code ${outcome.code}`;
+      : `ocm ${args.join(" ")} exited with code ${outcome.code}`;
   return `${prefix}\nSTDOUT:\n${outcome.stdout}\nSTDERR:\n${outcome.stderr}`;
 }
 
@@ -246,7 +245,9 @@ function runTodowriteJson(sessionID: string, toolName: string, payload: Record<s
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
   if (result.status !== 0) {
-    throw new Error(`todowrite run-json ${toolName} failed\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
+    throw new Error(
+      `todowrite run-json ${toolName} failed\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+    );
   }
   return JSON.parse(stdout) as { markdown?: string };
 }
@@ -283,8 +284,7 @@ async function readRawSessionMessages(sessionID: string): Promise<RawSessionMess
 function flattenMessageText(message: RawSessionMessage): string {
   return (message.parts ?? [])
     .filter(
-      (part): part is { type?: string; text?: string } =>
-        part !== null && typeof part === "object",
+      (part): part is { type?: string; text?: string } => part !== null && typeof part === "object",
     )
     .filter((part) => part.type === "text" && typeof part.text === "string")
     .map((part) => part.text?.trim() ?? "")
@@ -388,7 +388,10 @@ type TodowriteResult = {
   todos?: Array<{ id?: string }>;
 };
 
-function seedTodoTree(sessionID: string, input: { content: string; priority?: string }): TodowriteResult {
+function seedTodoTree(
+  sessionID: string,
+  input: { content: string; priority?: string },
+): TodowriteResult {
   return runTodowriteJson(sessionID, "todo-plan", {
     todos: [
       {
@@ -401,137 +404,165 @@ function seedTodoTree(sessionID: string, input: { content: string; priority?: st
 }
 
 describe("improved-todowrite live e2e", () => {
-  it("proves todo_plan publishes the initial todo tree witness", async () => {
-    const initialContent = `Initial ${randomUUID()}`;
-    let sessionID: string | undefined;
+  it(
+    "proves todo_plan publishes the initial todo tree witness",
+    async () => {
+      const initialContent = `Initial ${randomUUID()}`;
+      let sessionID: string | undefined;
 
-    try {
-      sessionID = createIdleProofSession();
-      runOcm([
-        "chat",
-        sessionID,
-        `Call todo_plan exactly once with this exact JSON arguments object: {"todos":[{"content":"${initialContent}","priority":"high","children":[]}]}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
-      ]);
-      const planPrompt = await waitForPublishedMessageText(
-        sessionID,
-        (text) =>
-          text.includes("# Todo Tree") &&
-          text.includes(initialContent) &&
-          text.includes(`- [ ] ${initialContent} <-- current`),
-        SESSION_TIMEOUT_MS,
-      );
-      expect(planPrompt).toContain(initialContent);
-      expect(planPrompt).toContain(`- [ ] ${initialContent} <-- current`);
-    } finally {
-      if (sessionID) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
-  }, SESSION_TIMEOUT_MS);
-
-  it("proves todo_edit publishes updated content", async () => {
-    const initialContent = `Initial ${randomUUID()}`;
-    const editedContent = `Edited ${randomUUID()}`;
-    let sessionID: string | undefined;
-
-    try {
-      sessionID = createIdleProofSession();
-      const seeded = seedTodoTree(sessionID, { content: initialContent, priority: "high" });
-      const id = seeded.current?.id ?? seeded.todos?.[0]?.id;
-      if (!id) throw new Error("todo-plan did not return a current or top-level todo id");
-      runOcm([
-        "chat",
-        sessionID,
-        `Call todo_edit exactly once with this exact JSON arguments object: {"ops":[{"type":"update","id":"${id}","content":"${editedContent}"}]}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
-      ]);
-      const editPrompt = await waitForPublishedMessageText(
-        sessionID,
-        (text) =>
-          text.includes("# Todo Tree") &&
-          text.includes(editedContent) &&
-          text.includes(`- [ ] ${editedContent} <-- current`),
-        SESSION_TIMEOUT_MS,
-      );
-      expect(editPrompt).toContain(editedContent);
-      expect(editPrompt).toContain(`- [ ] ${editedContent} <-- current`);
-    } finally {
-      if (sessionID) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
-  }, SESSION_TIMEOUT_MS);
-
-  it("proves todo_advance publishes completed status", async () => {
-    const editedContent = `Edited ${randomUUID()}`;
-    let sessionID: string | undefined;
-
-    try {
-      sessionID = createIdleProofSession();
-      const seeded = seedTodoTree(sessionID, { content: editedContent, priority: "high" });
-      const id = seeded.current?.id ?? seeded.todos?.[0]?.id;
-      if (!id) throw new Error("todo-plan did not return a current or top-level todo id");
-      runOcm([
-        "chat",
-        sessionID,
-        `Call todo_advance exactly once with this exact JSON arguments object: {"id":"${id}","action":"complete"}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
-      ]);
-      const advancePrompt = await waitForPublishedMessageText(
-        sessionID,
-        (text) =>
-          text.includes(editedContent) &&
-          text.includes(`- [x] ${editedContent}`),
-        SESSION_TIMEOUT_MS,
-      );
-      expect(advancePrompt).toContain(editedContent);
-      expect(advancePrompt).toContain(`- [x] ${editedContent}`);
-    } finally {
-      if (sessionID) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
-  }, SESSION_TIMEOUT_MS);
-
-  it("proves todo_read publishes the current todo tree", async () => {
-    const editedContent = `Edited ${randomUUID()}`;
-    let sessionID: string | undefined;
-
-    try {
-      sessionID = createIdleProofSession();
-      seedTodoTree(sessionID, { content: editedContent, priority: "high" });
-      const readArgs = [
-        "chat",
-        sessionID,
-        `Call todo_read exactly once with this exact JSON arguments object: {}. ${REAL_TOOL_CALL_RULE} ${REAL_TOOL_CALL_READ_RULE} Reply with ONLY READY.`,
-      ];
-      const readProcess = startOcm(readArgs);
-      let readPrompt: string;
       try {
-        readPrompt = await waitForPublishedMessageText(
+        sessionID = createIdleProofSession();
+        runOcm([
+          "chat",
+          sessionID,
+          `Call todo_plan exactly once with this exact JSON arguments object: {"todos":[{"content":"${initialContent}","priority":"high","children":[]}]}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
+        ]);
+        const planPrompt = await waitForPublishedMessageText(
+          sessionID,
+          (text) =>
+            text.includes("# Todo Tree") &&
+            text.includes(initialContent) &&
+            text.includes(`- [ ] ${initialContent} <-- current`),
+          SESSION_TIMEOUT_MS,
+        );
+        expect(planPrompt).toContain(initialContent);
+        expect(planPrompt).toContain(`- [ ] ${initialContent} <-- current`);
+      } finally {
+        if (sessionID) {
+          try {
+            runOcm(["delete", sessionID]);
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+    },
+    SESSION_TIMEOUT_MS,
+  );
+
+  it(
+    "proves todo_edit publishes updated content",
+    async () => {
+      const initialContent = `Initial ${randomUUID()}`;
+      const editedContent = `Edited ${randomUUID()}`;
+      let sessionID: string | undefined;
+
+      try {
+        sessionID = createIdleProofSession();
+        const seeded = seedTodoTree(sessionID, { content: initialContent, priority: "high" });
+        const id = seeded.current?.id ?? seeded.todos?.[0]?.id;
+        if (!id) throw new Error("todo-plan did not return a current or top-level todo id");
+        runOcm([
+          "chat",
+          sessionID,
+          `Call todo_edit exactly once with this exact JSON arguments object: {"ops":[{"type":"update","id":"${id}","content":"${editedContent}"}]}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
+        ]);
+        const editPrompt = await waitForPublishedMessageText(
           sessionID,
           (text) =>
             text.includes("# Todo Tree") &&
             text.includes(editedContent) &&
             text.includes(`- [ ] ${editedContent} <-- current`),
-          TODO_READ_WITNESS_TIMEOUT_MS,
+          SESSION_TIMEOUT_MS,
         );
-      } catch (error) {
+        expect(editPrompt).toContain(editedContent);
+        expect(editPrompt).toContain(`- [ ] ${editedContent} <-- current`);
+      } finally {
+        if (sessionID) {
+          try {
+            runOcm(["delete", sessionID]);
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+    },
+    SESSION_TIMEOUT_MS,
+  );
+
+  it(
+    "proves todo_advance publishes completed status",
+    async () => {
+      const editedContent = `Edited ${randomUUID()}`;
+      let sessionID: string | undefined;
+
+      try {
+        sessionID = createIdleProofSession();
+        const seeded = seedTodoTree(sessionID, { content: editedContent, priority: "high" });
+        const id = seeded.current?.id ?? seeded.todos?.[0]?.id;
+        if (!id) throw new Error("todo-plan did not return a current or top-level todo id");
+        runOcm([
+          "chat",
+          sessionID,
+          `Call todo_advance exactly once with this exact JSON arguments object: {"id":"${id}","action":"complete"}. ${REAL_TOOL_CALL_RULE} Reply with ONLY READY.`,
+        ]);
+        const advancePrompt = await waitForPublishedMessageText(
+          sessionID,
+          (text) => text.includes(editedContent) && text.includes(`- [x] ${editedContent}`),
+          SESSION_TIMEOUT_MS,
+        );
+        expect(advancePrompt).toContain(editedContent);
+        expect(advancePrompt).toContain(`- [x] ${editedContent}`);
+      } finally {
+        if (sessionID) {
+          try {
+            runOcm(["delete", sessionID]);
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+    },
+    SESSION_TIMEOUT_MS,
+  );
+
+  it(
+    "proves todo_read publishes the current todo tree",
+    async () => {
+      const editedContent = `Edited ${randomUUID()}`;
+      let sessionID: string | undefined;
+
+      try {
+        sessionID = createIdleProofSession();
+        seedTodoTree(sessionID, { content: editedContent, priority: "high" });
+        const readArgs = [
+          "chat",
+          sessionID,
+          `Call todo_read exactly once with this exact JSON arguments object: {}. ${REAL_TOOL_CALL_RULE} ${REAL_TOOL_CALL_READ_RULE} Reply with ONLY READY.`,
+        ];
+        const readProcess = startOcm(readArgs);
+        let readPrompt: string;
+        try {
+          readPrompt = await waitForPublishedMessageText(
+            sessionID,
+            (text) =>
+              text.includes("# Todo Tree") &&
+              text.includes(editedContent) &&
+              text.includes(`- [ ] ${editedContent} <-- current`),
+            TODO_READ_WITNESS_TIMEOUT_MS,
+          );
+        } catch (error) {
+          const outcome = await stopOcmProcess(readProcess);
+          const details = formatOcmProcessOutcome(readArgs, outcome);
+          throw new Error(`${error instanceof Error ? error.message : String(error)}\n${details}`);
+        }
+        waitIdle(sessionID);
         const outcome = await stopOcmProcess(readProcess);
-        const details = formatOcmProcessOutcome(readArgs, outcome);
-        throw new Error(
-          `${error instanceof Error ? error.message : String(error)}\n${details}`,
-        );
+        if (!outcome.timedOut && !outcome.killedForCleanup && outcome.code !== 0) {
+          throw new Error(formatOcmProcessOutcome(readArgs, outcome));
+        }
+        expect(readPrompt).toContain(editedContent);
+        expect(readPrompt).toContain(`- [ ] ${editedContent} <-- current`);
+      } finally {
+        if (sessionID) {
+          try {
+            runOcm(["delete", sessionID]);
+          } catch {
+            /* best-effort */
+          }
+        }
       }
-      waitIdle(sessionID);
-      const outcome = await stopOcmProcess(readProcess);
-      if (!outcome.timedOut && !outcome.killedForCleanup && outcome.code !== 0) {
-        throw new Error(formatOcmProcessOutcome(readArgs, outcome));
-      }
-      expect(readPrompt).toContain(editedContent);
-      expect(readPrompt).toContain(`- [ ] ${editedContent} <-- current`);
-    } finally {
-      if (sessionID) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
-  }, SESSION_TIMEOUT_MS);
+    },
+    SESSION_TIMEOUT_MS,
+  );
 });
