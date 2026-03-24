@@ -40,13 +40,17 @@ function setDisplay(setMeta: MetadataFn, display: TodoResult["display"]): string
 
 export const ImprovedTodowritePlugin: Plugin = ({ client }) => {
   function publishTodoTree(sessionID: string, result: TodoResult) {
-    const promptFn = client.session?.prompt;
-    if (promptFn === undefined) return delayMs(0).then(() => "skipped" as const);
-    return promptFn({
+    // Keep session reference (not the method) so `this` binding is correct when calling
+    // session.prompt(). Extracting the method via `const promptFn = session?.prompt` and
+    // then calling promptFn() loses `this`, causing `this._client` to be undefined inside
+    // the Session class method.
+    const session = client.session;
+    if (!session?.prompt) return delayMs(0).then(() => "skipped" as const);
+    return session.prompt({
       path: { id: sessionID },
       body: { noReply: true, parts: [{ type: "text", text: result.markdown }] },
     }).then(() =>
-      promptFn({
+      session.prompt({
         path: { id: sessionID },
         body: { noReply: true, parts: [{ type: "text", synthetic: true, text: result.reminder }] },
       }),
