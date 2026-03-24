@@ -45,7 +45,7 @@ export const ImprovedTodowritePlugin: Plugin = ({ client }) => {
     // then calling promptFn() loses `this`, causing `this._client` to be undefined inside
     // the Session class method.
     const session = client.session;
-    if (!(Boolean(session?.prompt))) return delayMs(0).then(() => "skipped" as const);
+    if (!Boolean(session?.prompt)) return delayMs(0).then(() => "skipped" as const);
     return session
       .prompt({
         path: { id: sessionID },
